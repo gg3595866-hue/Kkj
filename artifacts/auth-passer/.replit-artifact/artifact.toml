@@ -1,0 +1,27 @@
+kind = "web"
+previewPath = "/"
+title = "Auth Passer"
+version = "1.0.0"
+id = "artifacts/auth-passer"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 26101
+
+[services.development]
+run = "pnpm --filter @workspace/auth-passer run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/auth-passer", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/auth-passer/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "26101"
+BASE_PATH = "/"

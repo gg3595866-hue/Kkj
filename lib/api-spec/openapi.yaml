@@ -10,6 +10,12 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: proxy
+    description: Proxy requests with auth headers
+  - name: saved-requests
+    description: Saved request collections
+  - name: history
+    description: Request history
 paths:
   /healthz:
     get:
@@ -24,6 +30,137 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /proxy/send:
+    post:
+      operationId: sendProxyRequest
+      tags: [proxy]
+      summary: Send a proxied HTTP request
+      description: Forwards the request to the target URL with the given headers and body, bypassing CORS
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProxyRequestInput"
+      responses:
+        "200":
+          description: Response from target URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProxyResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /proxy/requests:
+    get:
+      operationId: listSavedRequests
+      tags: [saved-requests]
+      summary: List all saved requests
+      responses:
+        "200":
+          description: List of saved requests
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SavedRequest"
+    post:
+      operationId: createSavedRequest
+      tags: [saved-requests]
+      summary: Save a new request
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SavedRequestInput"
+      responses:
+        "201":
+          description: Created saved request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedRequest"
+
+  /proxy/requests/{id}:
+    put:
+      operationId: updateSavedRequest
+      tags: [saved-requests]
+      summary: Update a saved request
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SavedRequestInput"
+      responses:
+        "200":
+          description: Updated saved request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SavedRequest"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      operationId: deleteSavedRequest
+      tags: [saved-requests]
+      summary: Delete a saved request
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /proxy/history:
+    get:
+      operationId: listRequestHistory
+      tags: [history]
+      summary: List request history
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        "200":
+          description: Request history entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/HistoryEntry"
+    delete:
+      operationId: clearRequestHistory
+      tags: [history]
+      summary: Clear all request history
+      responses:
+        "204":
+          description: Cleared
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +171,157 @@ components:
       required:
         - status
 
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+
+    ProxyRequestInput:
+      type: object
+      required:
+        - url
+        - method
+      properties:
+        url:
+          type: string
+          description: Target URL to proxy to
+        method:
+          type: string
+          enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS]
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+          description: Custom headers to send
+        bearerToken:
+          type: ["string", "null"]
+          description: Bearer token for Authorization header
+        body:
+          type: ["string", "null"]
+          description: Request body (JSON string or plain text)
+        contentType:
+          type: ["string", "null"]
+          description: Content-Type header value
+
+    ProxyResponse:
+      type: object
+      required:
+        - status
+        - statusText
+        - headers
+        - body
+        - durationMs
+        - historyId
+      properties:
+        status:
+          type: integer
+        statusText:
+          type: string
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        body:
+          type: string
+          description: Response body as string
+        durationMs:
+          type: integer
+          description: Request duration in milliseconds
+        historyId:
+          type: integer
+          description: ID of the history entry created for this request
+
+    SavedRequest:
+      type: object
+      required:
+        - id
+        - name
+        - url
+        - method
+        - createdAt
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        url:
+          type: string
+        method:
+          type: string
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        bearerToken:
+          type: ["string", "null"]
+        body:
+          type: ["string", "null"]
+        contentType:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+          format: date-time
+
+    SavedRequestInput:
+      type: object
+      required:
+        - name
+        - url
+        - method
+      properties:
+        name:
+          type: string
+        url:
+          type: string
+        method:
+          type: string
+          enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS]
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        bearerToken:
+          type: ["string", "null"]
+        body:
+          type: ["string", "null"]
+        contentType:
+          type: ["string", "null"]
+
+    HistoryEntry:
+      type: object
+      required:
+        - id
+        - url
+        - method
+        - status
+        - durationMs
+        - createdAt
+      properties:
+        id:
+          type: integer
+        url:
+          type: string
+        method:
+          type: string
+        status:
+          type: integer
+        statusText:
+          type: string
+        requestHeaders:
+          type: object
+          additionalProperties:
+            type: string
+        responseHeaders:
+          type: object
+          additionalProperties:
+            type: string
+        responseBody:
+          type: ["string", "null"]
+        durationMs:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
