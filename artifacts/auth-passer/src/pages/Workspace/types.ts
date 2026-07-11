@@ -10,6 +10,7 @@ export interface AppRequestState {
   url: string;
   method: ProxyRequestInputMethod;
   bearerToken: string;
+  authHeaderName: string;
   headers: HeaderRow[];
   body: string;
   contentType: string;

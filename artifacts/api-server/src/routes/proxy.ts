@@ -26,6 +26,7 @@ proxyRouter.post("/proxy/send", async (req, res) => {
     method,
     headers: customHeaders = {},
     bearerToken,
+    authHeaderName,
     body,
     contentType,
   } = req.body;
@@ -51,7 +52,9 @@ proxyRouter.post("/proxy/send", async (req, res) => {
   };
 
   if (bearerToken) {
-    requestHeaders["Authorization"] = `Bearer ${bearerToken}`;
+    // Use custom auth header name (e.g. "x-auth" for 1xBet) or default to "Authorization"
+    const headerName = (authHeaderName && authHeaderName.trim()) ? authHeaderName.trim() : "Authorization";
+    requestHeaders[headerName] = `Bearer ${bearerToken}`;
   }
   if (contentType) {
     requestHeaders["Content-Type"] = contentType;

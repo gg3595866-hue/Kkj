@@ -5,6 +5,7 @@ import { ProxyRequestInputMethod, useSendProxyRequest, useCreateSavedRequest, ge
 import { useQueryClient } from '@tanstack/react-query';
 import { Plus, Trash, Play, Save } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { ImportFetchDialog } from './ImportFetchDialog';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'] as const;
 
@@ -28,6 +29,7 @@ export function RequestBuilder({ request, setRequest, setResponse }: { request: 
         method: request.method,
         headers: Object.keys(headersRecord).length > 0 ? headersRecord : undefined,
         bearerToken: request.bearerToken || undefined,
+        authHeaderName: request.authHeaderName || undefined,
         body: ['POST', 'PUT', 'PATCH'].includes(request.method) ? request.body : undefined,
         contentType: request.contentType || undefined
       }
@@ -56,6 +58,7 @@ export function RequestBuilder({ request, setRequest, setResponse }: { request: 
         method: request.method,
         headers: Object.keys(headersRecord).length > 0 ? headersRecord : undefined,
         bearerToken: request.bearerToken || undefined,
+        authHeaderName: request.authHeaderName || undefined,
         body: ['POST', 'PUT', 'PATCH'].includes(request.method) ? request.body : undefined,
         contentType: request.contentType || undefined
       }
@@ -104,6 +107,8 @@ export function RequestBuilder({ request, setRequest, setResponse }: { request: 
           <Button onClick={handleSend} disabled={sendProxy.isPending} className="shrink-0 w-20">
             {sendProxy.isPending ? <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" /> : <><Play className="w-4 h-4 mr-1" /> Send</>}
           </Button>
+
+          <ImportFetchDialog request={request} setRequest={setRequest} />
           
           <Dialog open={isSaveOpen} onOpenChange={setIsSaveOpen}>
             <DialogTrigger asChild>
@@ -138,10 +143,25 @@ export function RequestBuilder({ request, setRequest, setResponse }: { request: 
         <section className="space-y-2">
           <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Authentication</h3>
           <div className="flex items-center gap-2">
-            <span className="text-sm font-mono bg-muted px-2 py-1 rounded border shrink-0 text-muted-foreground">Bearer</span>
+            <div className="w-40 shrink-0">
+              <Input 
+                list="auth-header-names"
+                placeholder="Header Name"
+                className="font-mono text-sm bg-muted text-muted-foreground h-9"
+                value={request.authHeaderName}
+                onChange={e => setRequest({...request, authHeaderName: e.target.value})}
+                title="Auth Header Name"
+              />
+              <datalist id="auth-header-names">
+                <option value="Authorization" />
+                <option value="x-auth" />
+                <option value="X-API-Key" />
+                <option value="X-Token" />
+              </datalist>
+            </div>
             <Input 
               type="password"
-              placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+              placeholder="Bearer Token (e.g. eyJhbGci...)"
               value={request.bearerToken}
               onChange={e => setRequest({...request, bearerToken: e.target.value})}
             />

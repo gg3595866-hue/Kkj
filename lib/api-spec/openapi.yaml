@@ -198,7 +198,10 @@ components:
           description: Custom headers to send
         bearerToken:
           type: ["string", "null"]
-          description: Bearer token for Authorization header
+          description: Bearer token value (without "Bearer " prefix)
+        authHeaderName:
+          type: ["string", "null"]
+          description: Header name for the auth token (default "Authorization", use "x-auth" for 1xBet etc.)
         body:
           type: ["string", "null"]
           description: Request body (JSON string or plain text)

@@ -17,6 +17,7 @@ export default function Workspace() {
     url: 'https://jsonplaceholder.typicode.com/todos/1',
     method: 'GET',
     bearerToken: localStorage.getItem('auth_passer_bearer') || '',
+    authHeaderName: localStorage.getItem('authHeaderName') || 'Authorization',
     headers: [],
     body: '',
     contentType: 'application/json'
@@ -27,6 +28,10 @@ export default function Workspace() {
   useEffect(() => {
     localStorage.setItem('auth_passer_bearer', request.bearerToken);
   }, [request.bearerToken]);
+
+  useEffect(() => {
+    localStorage.setItem('authHeaderName', request.authHeaderName);
+  }, [request.authHeaderName]);
 
   return (
     <div className="h-[100dvh] w-full flex flex-col overflow-hidden bg-background">

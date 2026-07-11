@@ -25,7 +25,8 @@ export const SendProxyRequestBody = zod.object({
   "url": zod.string().describe('Target URL to proxy to'),
   "method": zod.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']),
   "headers": zod.record(zod.string(), zod.string()).optional().describe('Custom headers to send'),
-  "bearerToken": zod.string().nullish().describe('Bearer token for Authorization header'),
+  "bearerToken": zod.string().nullish().describe('Bearer token value (without \"Bearer \" prefix)'),
+  "authHeaderName": zod.string().nullish().describe('Header name for the auth token (default \"Authorization\", use \"x-auth\" for 1xBet etc.)'),
   "body": zod.string().nullish().describe('Request body (JSON string or plain text)'),
   "contentType": zod.string().nullish().describe('Content-Type header value')
 })

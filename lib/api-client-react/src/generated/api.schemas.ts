@@ -38,10 +38,15 @@ export interface ProxyRequestInput {
   /** Custom headers to send */
   headers?: ProxyRequestInputHeaders;
   /**
-     * Bearer token for Authorization header
+     * Bearer token value (without "Bearer " prefix)
      * @nullable
      */
   bearerToken?: string | null;
+  /**
+     * Header name for the auth token (default "Authorization", use "x-auth" for 1xBet etc.)
+     * @nullable
+     */
+  authHeaderName?: string | null;
   /**
      * Request body (JSON string or plain text)
      * @nullable
