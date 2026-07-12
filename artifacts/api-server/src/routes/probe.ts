@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { fetch as undiciFetch, Agent, request as undiciRequest } from "undici";
 import type { IncomingHttpHeaders } from "undici/types/header";
+import * as zlib from "node:zlib";
 
 const probeRouter = Router();
 
@@ -109,6 +110,9 @@ async function runPartial(
   body: string | null | undefined
 ) {
   const t0 = Date.now();
+  const RAW_BYTE_CAP = 64 * 1024; // hard cap on raw bytes read off the wire
+  const DECODED_BYTE_TARGET = 512; // how much decoded text we want to show
+  let intentionalAbort = false;
   try {
     const { statusCode, headers: respHeaders, body: bodyStream } =
       await undiciRequest(url, {
@@ -116,10 +120,10 @@ async function runPartial(
         headers: {
           ...headers,
           // undici's raw `request()` API (unlike `fetch()`) never decompresses
-          // the response body for us, and since we only read the first 512
-          // bytes and destroy the stream, we can't decode a truncated
-          // gzip/br/deflate stream anyway. Ask the server for an uncompressed
-          // body so the bytes we do read are legible.
+          // the response body for us. Requesting an uncompressed body is the
+          // first line of defense so the bytes we read are legible — but some
+          // servers/CDNs ignore Accept-Encoding and compress anyway, so we
+          // also decompress on our end below as a fallback.
           "Accept-Encoding": "identity",
           ...(body && !["GET", "HEAD"].includes(method.toUpperCase())
             ? { "Content-Type": headers["content-type"] ?? headers["Content-Type"] ?? "application/json" }
@@ -128,37 +132,110 @@ async function runPartial(
         // @ts-expect-error undici dispatcher
         dispatcher: insecureAgent,
         signal: AbortSignal.timeout(15_000),
+        // Note: undici's low-level `request()` (unlike `fetch()`) does not
+        // follow redirects on its own — it would need a redirect interceptor
+        // composed onto the dispatcher. Out of scope here; this technique
+        // intentionally inspects the first hop's raw response.
         body:
           body && !["GET", "HEAD"].includes(method.toUpperCase())
             ? body
             : undefined,
       });
 
-    // Read first chunk only, then destroy the stream
-    const reader = bodyStream;
-    let firstChunk = "";
-    try {
-      for await (const chunk of reader) {
-        firstChunk +=
-          typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
-        if (firstChunk.length >= 512) break; // read max 512 bytes then bail
-      }
-      // Destroy remaining stream
-      reader.destroy();
-    } catch {
-      // ignore destroy errors
+    const respHeadersObj = headersToObject(respHeaders);
+    const contentEncoding = (respHeadersObj["content-encoding"] || "").toLowerCase();
+
+    // Pick a decompressor based on what the server actually sent, regardless
+    // of the Accept-Encoding we asked for — some origins compress unasked.
+    let decompress: zlib.Gunzip | zlib.BrotliDecompress | zlib.Inflate | null = null;
+    if (contentEncoding.includes("br")) {
+      decompress = zlib.createBrotliDecompress();
+    } else if (contentEncoding.includes("gzip")) {
+      decompress = zlib.createGunzip();
+    } else if (contentEncoding.includes("deflate")) {
+      decompress = zlib.createInflate();
     }
+
+    let decodedText = "";
+    let rawBytesRead = 0;
+    let truncatedCompressed = false;
+    const decoder = new TextDecoder("utf-8", { fatal: false });
+
+    if (decompress) {
+      decompress.on("data", (chunk: Buffer) => {
+        decodedText += decoder.decode(chunk, { stream: true });
+      });
+      decompress.on("error", () => {
+        // A truncated compressed stream (expected, since we cut it short)
+        // will often throw here — that's fine, we keep whatever decoded
+        // successfully before the error.
+        truncatedCompressed = true;
+      });
+    }
+
+    try {
+      for await (const chunk of bodyStream) {
+        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        rawBytesRead += buf.length;
+        if (decompress) {
+          decompress.write(buf);
+        } else {
+          decodedText += decoder.decode(buf, { stream: true });
+        }
+        const enoughDecoded = decodedText.length >= DECODED_BYTE_TARGET;
+        const hitRawCap = rawBytesRead >= RAW_BYTE_CAP;
+        if (enoughDecoded || hitRawCap) break;
+      }
+    } catch (streamErr: unknown) {
+      // Reading errors here are expected once we intentionally destroy the
+      // stream below; only unexpected ones (e.g. TLS reset mid-read) matter,
+      // and we still return whatever we managed to decode.
+      void streamErr;
+    } finally {
+      intentionalAbort = true;
+      // Always tear down both the source stream and the decompressor so we
+      // never leak sockets/handles, even on the early-break paths above.
+      bodyStream.destroy();
+      if (decompress) {
+        try {
+          decompress.end();
+        } catch {
+          // ignore — stream already errored/destroyed
+        }
+        decompress.destroy();
+      }
+    }
+    decodedText += decoder.decode(); // flush any pending multi-byte tail
+
+    const displayBody = decodedText.length > DECODED_BYTE_TARGET
+      ? decodedText.slice(0, DECODED_BYTE_TARGET)
+      : decodedText;
 
     return {
       durationMs: Date.now() - t0,
       status: statusCode,
       statusText: String(statusCode),
-      responseHeaders: headersToObject(respHeaders),
-      body: firstChunk || null,
+      responseHeaders: respHeadersObj,
+      body: displayBody || null,
       error: null,
-      note: "Connection aborted after reading status + headers + first 512 bytes of body",
+      note: decompress
+        ? `Connection aborted after reading status + headers + first ~${DECODED_BYTE_TARGET} decoded bytes of body (server sent ${contentEncoding}-compressed body; decompressed on our end${truncatedCompressed ? ", stream was truncated mid-frame so trailing bytes may be missing" : ""})`
+        : `Connection aborted after reading status + headers + first ${DECODED_BYTE_TARGET} bytes of body`,
     };
   } catch (err: unknown) {
+    if (intentionalAbort) {
+      // Should not normally reach here (errors after this point are caught
+      // above), but guard against a stray rethrow from stream teardown.
+      return {
+        durationMs: Date.now() - t0,
+        status: 0,
+        statusText: "Error",
+        responseHeaders: {},
+        body: null,
+        error: null,
+        note: "Partial probe completed (stream teardown, no error)",
+      };
+    }
     return {
       durationMs: Date.now() - t0,
       status: 0,
