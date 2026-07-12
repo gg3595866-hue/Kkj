@@ -1,4 +1,4 @@
-import { pgTable, serial, text, timestamp, jsonb, integer } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, timestamp, jsonb, integer, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod/v4";
 
@@ -12,6 +12,23 @@ export const requestHistoryTable = pgTable("request_history", {
   responseHeaders: jsonb("response_headers").$type<Record<string, string>>(),
   responseBody: text("response_body"),
   durationMs: integer("duration_ms").notNull(),
+  transportOutcome: text("transport_outcome"),
+  hops: jsonb("hops").$type<Array<{
+    url: string;
+    status: number;
+    statusText: string;
+    headers: Record<string, string | string[]>;
+    durationMs: number;
+  }>>(),
+  bodySizeBytes: integer("body_size_bytes"),
+  bodyTruncated: boolean("body_truncated").default(false),
+  errorDetails: jsonb("error_details").$type<{
+    outcome: string;
+    errorCode: string | null;
+    errorMessage: string;
+    syscall: string | null;
+    causeChain: Array<{ message: string; code?: string; syscall?: string }>;
+  } | null>(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

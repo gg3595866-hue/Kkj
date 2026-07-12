@@ -32,12 +32,33 @@ export const SendProxyRequestBody = zod.object({
 })
 
 export const SendProxyRequestResponse = zod.object({
-  "status": zod.number(),
-  "statusText": zod.string(),
-  "headers": zod.record(zod.string(), zod.string()),
-  "body": zod.string().describe('Response body as string'),
-  "durationMs": zod.number().describe('Request duration in milliseconds'),
-  "historyId": zod.number().describe('ID of the history entry created for this request')
+  "transportOutcome": zod.enum(["http_response", "network_error", "tls_error", "timeout", "dns_error", "too_many_redirects"]),
+  "status": zod.number().optional(),
+  "statusText": zod.string().optional(),
+  "headers": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])).optional(),
+  "body": zod.string().optional().describe('Response body as string (charset-decoded from raw bytes)'),
+  "bodySizeBytes": zod.number().optional().describe('Total body size in bytes before any truncation'),
+  "bodyTruncated": zod.boolean().optional().describe('True when body exceeded 10 MB and was cut'),
+  "durationMs": zod.number().describe('Total request duration in milliseconds'),
+  "hops": zod.array(zod.object({
+    "url": zod.string(),
+    "status": zod.number(),
+    "statusText": zod.string(),
+    "headers": zod.record(zod.string(), zod.union([zod.string(), zod.array(zod.string())])),
+    "durationMs": zod.number(),
+  })).optional().describe('All hops including redirects and final response'),
+  "errorDetails": zod.object({
+    "outcome": zod.string(),
+    "errorCode": zod.string().nullable(),
+    "errorMessage": zod.string(),
+    "syscall": zod.string().nullable(),
+    "causeChain": zod.array(zod.object({
+      "message": zod.string(),
+      "code": zod.string().optional(),
+      "syscall": zod.string().optional(),
+    })),
+  }).nullable().optional().describe('Structured transport error — null when transportOutcome is http_response'),
+  "historyId": zod.number().nullable().optional().describe('ID of the history entry, null if DB write failed')
 })
 
 

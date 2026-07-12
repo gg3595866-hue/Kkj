@@ -337,18 +337,57 @@ export interface ProxyRequestInput {
   contentType?: string | null;
 }
 
-export type ProxyResponseHeaders = {[key: string]: string};
+export type ProxyResponseHeaders = {[key: string]: string | string[]};
 
-export interface ProxyResponse {
+export type ProxyResponseTransportOutcome =
+  | 'http_response'
+  | 'network_error'
+  | 'tls_error'
+  | 'timeout'
+  | 'dns_error'
+  | 'too_many_redirects';
+
+export interface ProxyHop {
+  url: string;
   status: number;
   statusText: string;
   headers: ProxyResponseHeaders;
-  /** Response body as string */
-  body: string;
+  durationMs: number;
+}
+
+export interface ProxyCauseChainItem {
+  message: string;
+  code?: string;
+  syscall?: string;
+}
+
+export interface ProxyErrorDetails {
+  outcome: string;
+  errorCode: string | null;
+  errorMessage: string;
+  syscall: string | null;
+  causeChain: ProxyCauseChainItem[];
+}
+
+export interface ProxyResponse {
+  transportOutcome: ProxyResponseTransportOutcome;
+  status?: number;
+  statusText?: string;
+  headers?: ProxyResponseHeaders;
+  /** Response body as string (charset-decoded from raw bytes) */
+  body?: string;
+  /** Total body size in bytes before any truncation */
+  bodySizeBytes?: number;
+  /** True when body exceeded 10 MB and was cut */
+  bodyTruncated?: boolean;
   /** Request duration in milliseconds */
   durationMs: number;
-  /** ID of the history entry created for this request */
-  historyId: number;
+  /** All hops including redirects and final response */
+  hops?: ProxyHop[];
+  /** Structured transport error — null when transportOutcome is http_response */
+  errorDetails?: ProxyErrorDetails | null;
+  /** ID of the history entry, null if DB write failed */
+  historyId?: number | null;
 }
 
 export type SavedRequestHeaders = {[key: string]: string};

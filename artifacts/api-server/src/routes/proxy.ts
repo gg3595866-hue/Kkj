@@ -2,23 +2,161 @@ import { Router } from "express";
 import { db } from "@workspace/db";
 import { savedRequestsTable, requestHistoryTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
-import { fetch as undiciFetch, Agent } from "undici";
-import { describeFetchError } from "../lib/fetch-error";
+import { request as undiciRequest, Agent } from "undici";
 
 const proxyRouter = Router();
 
-// Reusable agent that bypasses SSL cert errors (needed for private/internal APIs)
-const insecureAgent = new Agent({
+const MAX_BODY_BYTES = 10 * 1024 * 1024; // 10 MB — no silent truncation beyond this
+const MAX_REDIRECTS = 15;
+
+const agent = new Agent({
   connect: { rejectUnauthorized: false },
 });
 
-// Default browser-like headers so APIs don't reject server-side requests
 const DEFAULT_HEADERS: Record<string, string> = {
-  "User-Agent":
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
   Accept: "*/*",
   "Accept-Language": "en-US,en;q=0.9",
 };
+
+type TransportOutcome =
+  | "http_response"
+  | "network_error"
+  | "tls_error"
+  | "timeout"
+  | "dns_error"
+  | "too_many_redirects";
+
+interface Hop {
+  url: string;
+  status: number;
+  statusText: string;
+  headers: Record<string, string | string[]>;
+  durationMs: number;
+}
+
+interface ErrorDetails {
+  outcome: TransportOutcome;
+  errorCode: string | null;
+  errorMessage: string;
+  syscall: string | null;
+  causeChain: Array<{ message: string; code?: string; syscall?: string }>;
+}
+
+const STATUS_TEXT: Record<number, string> = {
+  100: "Continue", 101: "Switching Protocols",
+  200: "OK", 201: "Created", 202: "Accepted", 204: "No Content", 206: "Partial Content",
+  301: "Moved Permanently", 302: "Found", 303: "See Other", 304: "Not Modified",
+  307: "Temporary Redirect", 308: "Permanent Redirect",
+  400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found",
+  405: "Method Not Allowed", 408: "Request Timeout", 409: "Conflict", 410: "Gone",
+  422: "Unprocessable Entity", 429: "Too Many Requests",
+  500: "Internal Server Error", 501: "Not Implemented", 502: "Bad Gateway",
+  503: "Service Unavailable", 504: "Gateway Timeout",
+};
+
+function classifyError(err: unknown): ErrorDetails {
+  const chain: Array<{ message: string; code?: string; syscall?: string }> = [];
+
+  if (!(err instanceof Error)) {
+    return { outcome: "network_error", errorCode: null, errorMessage: String(err), syscall: null, causeChain: [] };
+  }
+
+  if (err.name === "TimeoutError" || err.name === "AbortError") {
+    return {
+      outcome: "timeout",
+      errorCode: "TIMEOUT",
+      errorMessage: err.message,
+      syscall: null,
+      causeChain: [{ message: err.message }],
+    };
+  }
+
+  let outcome: TransportOutcome = "network_error";
+  let topCode: string | null = null;
+  let topSyscall: string | null = null;
+  let cursor: unknown = err;
+
+  while (cursor instanceof Error) {
+    const code = (cursor as any).code as string | undefined;
+    const syscall = (cursor as any).syscall as string | undefined;
+    chain.push({ message: cursor.message, ...(code && { code }), ...(syscall && { syscall }) });
+
+    if (code && !topCode) {
+      topCode = code;
+      topSyscall = syscall ?? null;
+    }
+
+    if (code === "ENOTFOUND" || code === "EAI_AGAIN" || code === "EAI_NODATA") {
+      outcome = "dns_error";
+    } else if (
+      code === "CERT_HAS_EXPIRED" ||
+      code === "UNABLE_TO_VERIFY_LEAF_SIGNATURE" ||
+      code === "SELF_SIGNED_CERT_IN_CHAIN" ||
+      code === "ERR_TLS_CERT_ALTNAME_INVALID" ||
+      code?.startsWith("ERR_TLS") ||
+      code?.startsWith("CERT_")
+    ) {
+      outcome = "tls_error";
+    } else if (code === "ETIMEDOUT" || code === "ESOCKETTIMEDOUT") {
+      outcome = "timeout";
+    }
+
+    cursor = (cursor as any).cause;
+  }
+
+  return { outcome, errorCode: topCode, errorMessage: err.message, syscall: topSyscall, causeChain: chain };
+}
+
+function headersToFlat(raw: Record<string, string | string[]>): Record<string, string> {
+  const flat: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    flat[k] = Array.isArray(v) ? v.join(", ") : v;
+  }
+  return flat;
+}
+
+function decodeBody(buf: Buffer, contentType?: string | string[]): string {
+  const ct = Array.isArray(contentType) ? contentType[0] : (contentType ?? "");
+  const m = ct.match(/charset=([^\s;,]+)/i);
+  const charset = m ? m[1].toLowerCase().replace(/^"(.+)"$/, "$1") : "utf-8";
+  try {
+    return new TextDecoder(charset).decode(buf);
+  } catch {
+    return buf.toString("utf-8");
+  }
+}
+
+async function drainStream(stream: AsyncIterable<Buffer | Uint8Array>): Promise<void> {
+  for await (const _ of stream) { /* discard */ }
+}
+
+async function readBodyStream(
+  stream: AsyncIterable<Buffer | Uint8Array>,
+  limitBytes: number,
+): Promise<{ buffer: Buffer; truncated: boolean; totalBytes: number }> {
+  const chunks: Buffer[] = [];
+  let collected = 0;
+  let totalBytes = 0;
+  let truncated = false;
+
+  for await (const chunk of stream) {
+    const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalBytes += buf.byteLength;
+    if (!truncated) {
+      if (collected + buf.byteLength <= limitBytes) {
+        chunks.push(buf);
+        collected += buf.byteLength;
+      } else {
+        const remaining = limitBytes - collected;
+        if (remaining > 0) chunks.push(buf.slice(0, remaining));
+        truncated = true;
+      }
+    }
+  }
+
+  return { buffer: Buffer.concat(chunks), truncated, totalBytes };
+}
 
 // POST /api/proxy/send
 proxyRouter.post("/proxy/send", async (req, res) => {
@@ -37,7 +175,6 @@ proxyRouter.post("/proxy/send", async (req, res) => {
     return;
   }
 
-  // Validate URL
   let parsedUrl: URL;
   try {
     parsedUrl = new URL(url);
@@ -46,113 +183,152 @@ proxyRouter.post("/proxy/send", async (req, res) => {
     return;
   }
 
-  // Build headers: defaults first, then custom, then auth on top
   const requestHeaders: Record<string, string> = {
     ...DEFAULT_HEADERS,
     ...customHeaders,
   };
 
   if (bearerToken) {
-    // Use custom auth header name (e.g. "x-auth" for 1xBet) or default to "Authorization".
-    // Only prepend "Bearer " for the standard Authorization header — custom headers
-    // (x-auth, X-Token, etc.) expect the raw token value without any prefix.
-    const headerName = (authHeaderName && authHeaderName.trim()) ? authHeaderName.trim() : "Authorization";
+    const headerName = authHeaderName?.trim() || "Authorization";
     const isStandardAuth = headerName.toLowerCase() === "authorization";
     requestHeaders[headerName] = isStandardAuth ? `Bearer ${bearerToken}` : bearerToken;
   }
   if (contentType) {
     requestHeaders["Content-Type"] = contentType;
   } else if (body && !["GET", "HEAD"].includes(method.toUpperCase())) {
-    // Auto-detect JSON
     try {
       JSON.parse(body);
       requestHeaders["Content-Type"] = "application/json";
     } catch {
-      // not JSON — leave content-type unset
+      // not JSON
     }
   }
 
-  const startTime = Date.now();
+  const globalStart = Date.now();
+  const hops: Hop[] = [];
+  let currentUrl = parsedUrl;
+  let currentMethod = method.toUpperCase() as string;
+  let transportOutcome: TransportOutcome = "http_response";
+  let errorDetails: ErrorDetails | null = null;
+
+  let finalStatus = 0;
+  let finalStatusText = "";
+  let finalHeaders: Record<string, string | string[]> = {};
+  let finalBody = "";
+  let finalBodySizeBytes = 0;
+  let finalBodyTruncated = false;
 
   try {
-    const fetchOptions: Parameters<typeof undiciFetch>[1] = {
-      method,
-      headers: requestHeaders,
-      // @ts-expect-error undici dispatcher type
-      dispatcher: insecureAgent,
-      // 30-second timeout
-      signal: AbortSignal.timeout(30_000),
-      redirect: "follow",
-    };
+    for (let hopIndex = 0; hopIndex <= MAX_REDIRECTS; hopIndex++) {
+      if (hopIndex === MAX_REDIRECTS) {
+        transportOutcome = "too_many_redirects";
+        break;
+      }
 
-    if (body && !["GET", "HEAD"].includes(method.toUpperCase())) {
-      fetchOptions.body = body;
+      const hopStart = Date.now();
+
+      // Only send body on the first request, or on 307/308 redirects (method-preserving)
+      const sendBody = body && !["GET", "HEAD"].includes(currentMethod) ? body : undefined;
+
+      const response = await undiciRequest(currentUrl.toString(), {
+        method: currentMethod,
+        headers: requestHeaders,
+        // @ts-expect-error undici dispatcher type
+        dispatcher: agent,
+        signal: AbortSignal.timeout(30_000),
+        maxRedirections: 0,
+        body: sendBody,
+        reset: true,
+      });
+
+      const rawHeaders = response.headers as Record<string, string | string[]>;
+      const statusCode = response.statusCode;
+      const statusText = STATUS_TEXT[statusCode] ?? String(statusCode);
+      const hopDurationMs = Date.now() - hopStart;
+
+      const isRedirect = [301, 302, 303, 307, 308].includes(statusCode);
+
+      if (isRedirect) {
+        // Capture this redirect hop but don't read its body
+        hops.push({ url: currentUrl.toString(), status: statusCode, statusText, headers: rawHeaders, durationMs: hopDurationMs });
+        await drainStream(response.body as AsyncIterable<Buffer | Uint8Array>);
+
+        const locationRaw = rawHeaders["location"];
+        const location = Array.isArray(locationRaw) ? locationRaw[0] : locationRaw;
+        if (!location) break;
+
+        currentUrl = new URL(location, currentUrl);
+
+        // 301, 302, 303 → switch to GET (per browser behaviour)
+        if ([301, 302, 303].includes(statusCode) && currentMethod !== "GET") {
+          currentMethod = "GET";
+        }
+        continue;
+      }
+
+      // Final response — capture everything raw
+      const { buffer, truncated, totalBytes } = await readBodyStream(
+        response.body as AsyncIterable<Buffer | Uint8Array>,
+        MAX_BODY_BYTES,
+      );
+
+      finalStatus = statusCode;
+      finalStatusText = statusText;
+      finalHeaders = rawHeaders;
+      finalBody = decodeBody(buffer, rawHeaders["content-type"]);
+      finalBodySizeBytes = totalBytes;
+      finalBodyTruncated = truncated;
+
+      hops.push({ url: currentUrl.toString(), status: statusCode, statusText, headers: rawHeaders, durationMs: hopDurationMs });
+
+      transportOutcome = "http_response";
+      break;
     }
-
-    const response = await undiciFetch(parsedUrl.toString(), fetchOptions);
-    const durationMs = Date.now() - startTime;
-
-    const responseHeaders: Record<string, string> = {};
-    response.headers.forEach((value: string, key: string) => {
-      responseHeaders[key] = value;
-    });
-
-    const responseBody = await response.text();
-    const truncated =
-      responseBody.length > 200_000
-        ? responseBody.slice(0, 200_000) + "\n\n... (truncated at 200 KB)"
-        : responseBody;
-
-    const [historyEntry] = await db
-      .insert(requestHistoryTable)
-      .values({
-        url,
-        method: method.toUpperCase(),
-        status: response.status,
-        statusText: response.statusText || String(response.status),
-        requestHeaders,
-        responseHeaders,
-        responseBody: truncated,
-        durationMs,
-      })
-      .returning();
-
-    res.json({
-      status: response.status,
-      statusText: response.statusText || String(response.status),
-      headers: responseHeaders,
-      body: truncated,
-      durationMs,
-      historyId: historyEntry.id,
-    });
   } catch (err: unknown) {
-    const durationMs = Date.now() - startTime;
+    errorDetails = classifyError(err);
+    transportOutcome = errorDetails.outcome;
+  }
 
-    const errorMessage = describeFetchError(err, parsedUrl.hostname);
+  const durationMs = Date.now() - globalStart;
 
+  let historyId: number | null = null;
+  try {
     const [historyEntry] = await db
       .insert(requestHistoryTable)
       .values({
         url,
         method: method.toUpperCase(),
-        status: 0,
-        statusText: "Network Error",
+        status: finalStatus,
+        statusText: finalStatusText || transportOutcome,
         requestHeaders,
-        responseHeaders: {},
-        responseBody: errorMessage,
+        responseHeaders: headersToFlat(finalHeaders),
+        responseBody: finalBody,
         durationMs,
+        transportOutcome,
+        hops,
+        bodySizeBytes: finalBodySizeBytes,
+        bodyTruncated: finalBodyTruncated,
+        errorDetails,
       })
       .returning();
-
-    res.status(200).json({
-      status: 0,
-      statusText: "Network Error",
-      headers: {},
-      body: errorMessage,
-      durationMs,
-      historyId: historyEntry.id,
-    });
+    historyId = historyEntry.id;
+  } catch {
+    // DB failure must not hide the actual captured response
   }
+
+  res.json({
+    transportOutcome,
+    status: finalStatus,
+    statusText: finalStatusText,
+    headers: finalHeaders,
+    body: finalBody,
+    bodySizeBytes: finalBodySizeBytes,
+    bodyTruncated: finalBodyTruncated,
+    durationMs,
+    hops,
+    errorDetails,
+    historyId,
+  });
 });
 
 // GET /api/proxy/requests
@@ -166,8 +342,7 @@ proxyRouter.get("/proxy/requests", async (_req, res) => {
 
 // POST /api/proxy/requests
 proxyRouter.post("/proxy/requests", async (req, res) => {
-  const { name, url, method, headers, bearerToken, body, contentType } =
-    req.body;
+  const { name, url, method, headers, bearerToken, body, contentType } = req.body;
 
   if (!name || !url || !method) {
     res.status(400).json({ error: "name, url, and method are required" });
@@ -193,13 +368,9 @@ proxyRouter.post("/proxy/requests", async (req, res) => {
 // PUT /api/proxy/requests/:id
 proxyRouter.put("/proxy/requests/:id", async (req, res) => {
   const id = parseInt(req.params.id, 10);
-  if (isNaN(id)) {
-    res.status(400).json({ error: "Invalid id" });
-    return;
-  }
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
 
-  const { name, url, method, headers, bearerToken, body, contentType } =
-    req.body;
+  const { name, url, method, headers, bearerToken, body, contentType } = req.body;
 
   const [updated] = await db
     .update(savedRequestsTable)
@@ -215,22 +386,14 @@ proxyRouter.put("/proxy/requests/:id", async (req, res) => {
     .where(eq(savedRequestsTable.id, id))
     .returning();
 
-  if (!updated) {
-    res.status(404).json({ error: "Not found" });
-    return;
-  }
-
+  if (!updated) { res.status(404).json({ error: "Not found" }); return; }
   res.json(updated);
 });
 
 // DELETE /api/proxy/requests/:id
 proxyRouter.delete("/proxy/requests/:id", async (req, res) => {
   const id = parseInt(req.params.id, 10);
-  if (isNaN(id)) {
-    res.status(400).json({ error: "Invalid id" });
-    return;
-  }
-
+  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
   await db.delete(savedRequestsTable).where(eq(savedRequestsTable.id, id));
   res.status(204).send();
 });
