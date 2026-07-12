@@ -72,8 +72,14 @@ export function ProbeTab({ request, setRequest, setResponse }: { request: AppReq
     replay: false,
     idprobe: false,
     surrogateprobe: false,
+    jwtprobe: false,
   });
   const [idBodyField, setIdBodyField] = useState('UI');
+  const [idCustomValues, setIdCustomValues] = useState('');
+
+  // JWT tamper probe state
+  const [jwtUiField, setJwtUiField] = useState('UI');
+  const [jwtFakeUserId, setJwtFakeUserId] = useState('99999999');
 
   // Surrogate probe state
   const [surrogateUiField, setSurrogateUiField] = useState('UI');
@@ -105,7 +111,7 @@ export function ProbeTab({ request, setRequest, setResponse }: { request: AppReq
   const handleRun = () => {
     const selectedTechniques = Object.entries(techniques)
       .filter(([_, v]) => v)
-      .map(([k]) => k as "timing" | "partial" | "expect100" | "race" | "cross" | "methodprobe" | "validationprobe" | "replay" | "idprobe" | "surrogateprobe");
+      .map(([k]) => k as "timing" | "partial" | "expect100" | "race" | "cross" | "methodprobe" | "validationprobe" | "replay" | "idprobe" | "surrogateprobe" | "jwtprobe");
       
     if (selectedTechniques.length === 0) return;
 
@@ -144,7 +150,19 @@ export function ProbeTab({ request, setRequest, setResponse }: { request: AppReq
             .filter(Boolean),
         } : {}),
         // Identity mismatch probe
-        ...(techniques.idprobe ? { idBodyField: idBodyField.trim() || 'UI' } : {}),
+        ...(techniques.idprobe ? {
+          idBodyField: idBodyField.trim() || 'UI',
+          idExtraValues: idCustomValues
+            .split('\n')
+            .map(s => s.trim())
+            .filter(Boolean)
+            .map(s => isNaN(Number(s)) ? s : Number(s)),
+        } : {}),
+        // JWT tamper probe
+        ...(techniques.jwtprobe ? {
+          jwtUiField: jwtUiField.trim() || 'UI',
+          jwtFakeUserId: Number(jwtFakeUserId) || 99999999,
+        } : {}),
         // Surrogate identity probe
         ...(techniques.surrogateprobe ? {
           surrogateUiField: surrogateUiField.trim() || 'UI',
@@ -310,18 +328,53 @@ export function ProbeTab({ request, setRequest, setResponse }: { request: AppReq
               <input type="checkbox" className="mt-1 accent-primary" checked={techniques.idprobe}
                 onChange={e => setTechniques(prev => ({...prev, idprobe: e.target.checked}))} />
               <div className="flex-1">
-                <div className="text-sm font-medium">Identity Mismatch Probe <span className="text-xs font-normal text-green-400 ml-1">✓ safe — never registers an action</span></div>
-                <div className="text-xs text-muted-foreground">Sends the request with a <code className="bg-muted px-1 rounded text-[10px]">UI</code> value that does NOT match the JWT <code className="bg-muted px-1 rounded text-[10px]">sub</code> claim. If the server rejects all mismatches (non-2xx) the JWT↔body binding is enforced, confirming this is a safe probing channel. No AN consumed.</div>
+                <div className="text-sm font-medium">Identity Mismatch Probe</div>
+                <div className="text-xs text-muted-foreground">Tests whether the server validates the body field against the JWT sub claim. Sends 5 hardcoded variants (jwt_id±1, 0, large fake, string) plus any custom IDs you add below.</div>
                 {techniques.idprobe && (
-                  <div className="mt-2 flex items-center gap-2" onClick={e => e.preventDefault()}>
-                    <span className="text-xs text-muted-foreground">Body field:</span>
-                    <Input
-                      placeholder="UI"
-                      value={idBodyField}
-                      onChange={e => setIdBodyField(e.target.value)}
-                      className="w-24 h-7 text-xs font-mono"
-                    />
-                    <span className="text-xs text-muted-foreground">field name in request body to tamper</span>
+                  <div className="mt-2 space-y-2" onClick={e => e.preventDefault()}>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground shrink-0">Body field:</span>
+                      <Input placeholder="UI" value={idBodyField} onChange={e => setIdBodyField(e.target.value)} className="w-24 h-7 text-xs font-mono" />
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <span className="text-xs text-muted-foreground shrink-0 pt-1">Custom IDs to test:</span>
+                      <div className="flex-1">
+                        <Textarea
+                          placeholder={"One value per line, e.g.:\n12345678\nmyDummyAccountId"}
+                          value={idCustomValues}
+                          onChange={e => setIdCustomValues(e.target.value)}
+                          className="font-mono text-xs min-h-[50px]"
+                        />
+                        <div className="text-[10px] text-muted-foreground mt-0.5">These will be sent in addition to the 5 hardcoded variants. Numbers or strings both work.</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </label>
+
+            {/* JWT Tamper Probe */}
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input type="checkbox" className="mt-1 accent-primary" checked={techniques.jwtprobe}
+                onChange={e => setTechniques(prev => ({...prev, jwtprobe: e.target.checked}))} />
+              <div className="flex-1">
+                <div className="text-sm font-medium">JWT Tamper Probe <span className="text-xs font-normal text-yellow-400 ml-1">🔑 tests if server verifies JWT signatures</span></div>
+                <div className="text-xs text-muted-foreground mb-1">
+                  Takes your real JWT, changes the <code className="bg-muted px-1 rounded text-[10px]">sub</code> to a fake user ID, and sends 5 tampered variants: <code className="bg-muted px-1 rounded text-[10px]">alg:none</code>, stripped sig, original sig on fake payload, HS256/"", HS256/"secret".
+                  <span className="block mt-0.5 text-green-400">If any variant gets 2xx → signature is NOT verified → you can probe with any fake identity safely.</span>
+                  Also patches the body <code className="bg-muted px-1 rounded text-[10px]">UI</code> field to match the fake ID.
+                </div>
+                {techniques.jwtprobe && (
+                  <div className="mt-2 space-y-2" onClick={e => e.preventDefault()}>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground shrink-0">Body field:</span>
+                      <Input placeholder="UI" value={jwtUiField} onChange={e => setJwtUiField(e.target.value)} className="w-20 h-7 text-xs font-mono" />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground shrink-0">Fake user ID:</span>
+                      <Input placeholder="99999999" value={jwtFakeUserId} onChange={e => setJwtFakeUserId(e.target.value)} className="w-32 h-7 text-xs font-mono" />
+                      <span className="text-xs text-muted-foreground">numeric ID to put in both JWT sub and body UI</span>
+                    </div>
                   </div>
                 )}
               </div>

@@ -31,8 +31,9 @@ export function ProbeResults({ response }: { response: any }) {
             {response.validationprobe && <ValidationProbeResult rounds={response.validationprobe} />}
             {response.idprobe && <IdentityProbeResult result={response.idprobe} />}
             {response.surrogateprobe && <SurrogateProbeResult result={response.surrogateprobe} />}
+            {response.jwtprobe && <JwtTamperProbeResult result={response.jwtprobe} />}
             
-            {!response.timing && !response.partial && !response.expect100 && !response.race && !response.cross && !response.methodprobe && !response.validationprobe && !response.replay && !response.idprobe && !response.surrogateprobe && (
+            {!response.timing && !response.partial && !response.expect100 && !response.race && !response.cross && !response.methodprobe && !response.validationprobe && !response.replay && !response.idprobe && !response.surrogateprobe && !response.jwtprobe && (
               <div className="text-muted-foreground text-sm font-mono text-center mt-10">
                 No probe techniques were executed.
               </div>
@@ -480,6 +481,101 @@ function ValidationProbeResult({ rounds }: { rounds: any[] | { error: string } }
                         className={`flex gap-2 ${hasMore ? 'cursor-pointer' : ''}`}
                         onClick={() => hasMore && setExpandedIdx(expanded ? null : i)}
                       >
+                        <span className="text-muted-foreground whitespace-pre-wrap flex-1 break-all text-[11px] leading-tight">
+                          {expanded ? bodyStr : bodyStr.substring(0, 120) + (hasMore && !expanded ? '...' : '')}
+                        </span>
+                        {hasMore && (
+                          <span className="text-muted-foreground shrink-0 mt-0.5">
+                            {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground/50 text-[11px] italic">Empty body</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function JwtTamperProbeResult({ result }: { result: any }) {
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+
+  if (result.error) {
+    return (
+      <div className="space-y-3">
+        <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">JWT Tamper Probe</h3>
+        <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 p-3 rounded font-mono">{result.error}</div>
+      </div>
+    );
+  }
+
+  const isCritical = result.verdict === "signature_not_verified";
+
+  return (
+    <div className="space-y-3">
+      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">JWT Tamper Probe</h3>
+
+      {/* Verdict banner */}
+      <div className={`text-xs p-3 rounded border font-mono leading-relaxed ${isCritical ? 'text-red-400 bg-red-400/10 border-red-400/30' : 'text-green-400 bg-green-400/10 border-green-400/30'}`}>
+        {result.verdictDetail}
+      </div>
+
+      {/* Summary */}
+      <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs font-mono bg-muted/10 p-3 rounded border border-border/30">
+        <span className="text-muted-foreground">Original sub</span>
+        <span>{result.origSub}</span>
+        <span className="text-muted-foreground">Fake sub used</span>
+        <span className="text-primary">{result.fakeSub}</span>
+        <span className="text-muted-foreground">Fake user ID</span>
+        <span className="text-primary">{result.fakeUserId}</span>
+        <span className="text-muted-foreground">Body field patched</span>
+        <span>{result.uiField} → {result.fakeUserId}</span>
+      </div>
+
+      {/* Results table */}
+      <div className="border border-border/50 rounded-md overflow-hidden">
+        <table className="w-full text-left text-sm font-mono">
+          <thead className="bg-muted/30 text-xs">
+            <tr>
+              <th className="px-3 py-2 border-b text-muted-foreground">Variant</th>
+              <th className="px-3 py-2 border-b w-24 text-muted-foreground">Duration</th>
+              <th className="px-3 py-2 border-b w-24 text-muted-foreground">Status</th>
+              <th className="px-3 py-2 border-b text-muted-foreground">Body / Error</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/30">
+            {(result.results ?? []).map((r: any, i: number) => {
+              const bodyStr = typeof r.body === 'string' ? r.body : r.body ? JSON.stringify(r.body) : '';
+              const hasMore = bodyStr && bodyStr.length > 120;
+              const expanded = expandedIdx === i;
+              return (
+                <tr key={i} className={`hover:bg-muted/10 transition-colors align-top ${r.committed ? 'bg-red-400/10' : ''}`}>
+                  <td className="px-3 py-2">
+                    <div className={`font-semibold text-xs ${r.committed ? 'text-red-400' : 'text-foreground'}`}>{r.label}</div>
+                    <div className="text-[10px] text-muted-foreground mt-0.5">{r.desc}</div>
+                    {r.committed && <div className="text-[10px] text-red-400 mt-0.5">🚨 ACCEPTED — signature NOT verified</div>}
+                  </td>
+                  <td className="px-3 py-2 text-xs">{r.durationMs}ms</td>
+                  <td className="px-3 py-2">
+                    <Badge variant={getStatusVariant(r.status)}>{r.status || 'err'}</Badge>
+                    {r.committed
+                      ? <div className="text-[9px] text-red-400 mt-0.5">⚠ accepted</div>
+                      : <div className="text-[9px] text-green-400 mt-0.5">rejected</div>
+                    }
+                  </td>
+                  <td className="px-3 py-2">
+                    {r.error ? (
+                      <span className="text-destructive text-[11px] break-all">{r.error}</span>
+                    ) : bodyStr ? (
+                      <div className={`flex gap-2 ${hasMore ? 'cursor-pointer' : ''}`}
+                        onClick={() => hasMore && setExpandedIdx(expanded ? null : i)}>
                         <span className="text-muted-foreground whitespace-pre-wrap flex-1 break-all text-[11px] leading-tight">
                           {expanded ? bodyStr : bodyStr.substring(0, 120) + (hasMore && !expanded ? '...' : '')}
                         </span>

