@@ -70,7 +70,9 @@ export function ProbeTab({ request, setRequest, setResponse }: { request: AppReq
     methodprobe: false,
     validationprobe: false,
     replay: false,
+    idprobe: false,
   });
+  const [idBodyField, setIdBodyField] = useState('UI');
   
   const [timingRounds, setTimingRounds] = useState(5);
   const [raceConnections, setRaceConnections] = useState(10);
@@ -96,7 +98,7 @@ export function ProbeTab({ request, setRequest, setResponse }: { request: AppReq
   const handleRun = () => {
     const selectedTechniques = Object.entries(techniques)
       .filter(([_, v]) => v)
-      .map(([k]) => k as "timing" | "partial" | "expect100" | "race" | "cross" | "methodprobe" | "validationprobe" | "replay");
+      .map(([k]) => k as "timing" | "partial" | "expect100" | "race" | "cross" | "methodprobe" | "validationprobe" | "replay" | "idprobe");
       
     if (selectedTechniques.length === 0) return;
 
@@ -134,6 +136,8 @@ export function ProbeTab({ request, setRequest, setResponse }: { request: AppReq
             .map(p => p.trim())
             .filter(Boolean),
         } : {}),
+        // Identity mismatch probe
+        ...(techniques.idprobe ? { idBodyField: idBodyField.trim() || 'UI' } : {}),
       }
     }, {
       onSuccess: (res) => {
@@ -277,6 +281,28 @@ export function ProbeTab({ request, setRequest, setResponse }: { request: AppReq
                     <div className="text-xs text-muted-foreground">
                       {validationPatches.split('\n').map(p => p.trim()).filter(Boolean).length} patches — each JSON object is merged over the base body
                     </div>
+                  </div>
+                )}
+              </div>
+            </label>
+
+            {/* Identity Mismatch Probe */}
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input type="checkbox" className="mt-1 accent-primary" checked={techniques.idprobe}
+                onChange={e => setTechniques(prev => ({...prev, idprobe: e.target.checked}))} />
+              <div className="flex-1">
+                <div className="text-sm font-medium">Identity Mismatch Probe <span className="text-xs font-normal text-green-400 ml-1">✓ safe — never registers an action</span></div>
+                <div className="text-xs text-muted-foreground">Sends the request with a <code className="bg-muted px-1 rounded text-[10px]">UI</code> value that does NOT match the JWT <code className="bg-muted px-1 rounded text-[10px]">sub</code> claim. If the server rejects all mismatches (non-2xx) the JWT↔body binding is enforced, confirming this is a safe probing channel. No AN consumed.</div>
+                {techniques.idprobe && (
+                  <div className="mt-2 flex items-center gap-2" onClick={e => e.preventDefault()}>
+                    <span className="text-xs text-muted-foreground">Body field:</span>
+                    <Input
+                      placeholder="UI"
+                      value={idBodyField}
+                      onChange={e => setIdBodyField(e.target.value)}
+                      className="w-24 h-7 text-xs font-mono"
+                    />
+                    <span className="text-xs text-muted-foreground">field name in request body to tamper</span>
                   </div>
                 )}
               </div>

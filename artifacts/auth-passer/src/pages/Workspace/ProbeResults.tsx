@@ -29,8 +29,9 @@ export function ProbeResults({ response }: { response: any }) {
             {response.replay && <ReplayResult rounds={response.replay} />}
             {response.methodprobe && <MethodProbeResult rounds={response.methodprobe} />}
             {response.validationprobe && <ValidationProbeResult rounds={response.validationprobe} />}
+            {response.idprobe && <IdentityProbeResult result={response.idprobe} />}
             
-            {!response.timing && !response.partial && !response.expect100 && !response.race && !response.cross && !response.methodprobe && !response.validationprobe && !response.replay && (
+            {!response.timing && !response.partial && !response.expect100 && !response.race && !response.cross && !response.methodprobe && !response.validationprobe && !response.replay && !response.idprobe && (
               <div className="text-muted-foreground text-sm font-mono text-center mt-10">
                 No probe techniques were executed.
               </div>
@@ -473,6 +474,122 @@ function ValidationProbeResult({ rounds }: { rounds: any[] | { error: string } }
                   <td className="px-3 py-2">
                     {r.error ? (
                       <span className="text-destructive text-[11px] break-all">{r.error}</span>
+                    ) : bodyStr ? (
+                      <div
+                        className={`flex gap-2 ${hasMore ? 'cursor-pointer' : ''}`}
+                        onClick={() => hasMore && setExpandedIdx(expanded ? null : i)}
+                      >
+                        <span className="text-muted-foreground whitespace-pre-wrap flex-1 break-all text-[11px] leading-tight">
+                          {expanded ? bodyStr : bodyStr.substring(0, 120) + (hasMore && !expanded ? '...' : '')}
+                        </span>
+                        {hasMore && (
+                          <span className="text-muted-foreground shrink-0 mt-0.5">
+                            {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground/50 text-[11px] italic">Empty body</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function IdentityProbeResult({ result }: { result: any }) {
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+
+  const verdictConfig = {
+    jwt_bound: {
+      label: '✓ JWT↔Body binding enforced — mismatched UI requests are SAFE to use as probes',
+      className: 'text-green-400 bg-green-400/10 border-green-400/30',
+    },
+    ui_independent: {
+      label: '⚠ Server accepted a mismatched UI — body UI field may be independent of JWT. Probing this way is NOT safe.',
+      className: 'text-red-400 bg-red-400/10 border-red-400/30',
+    },
+    partial: {
+      label: '△ Mixed results — some mismatches accepted, some rejected. Further investigation needed.',
+      className: 'text-yellow-400 bg-yellow-400/10 border-yellow-400/30',
+    },
+  };
+
+  const vc = verdictConfig[result.verdict as keyof typeof verdictConfig] ?? {
+    label: result.verdict,
+    className: 'text-muted-foreground bg-muted/10 border-border/30',
+  };
+
+  return (
+    <div className="space-y-3">
+      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Identity Mismatch Probe</h3>
+
+      {/* Verdict banner */}
+      <div className={`text-xs p-3 rounded border font-mono ${vc.className}`}>
+        {vc.label}
+      </div>
+
+      {/* JWT + body field summary */}
+      <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs font-mono bg-muted/10 p-3 rounded border border-border/30">
+        <span className="text-muted-foreground">JWT sub</span>
+        <span className="text-foreground">{result.jwtSub ?? <span className="italic text-muted-foreground/60">not found</span>}</span>
+
+        <span className="text-muted-foreground">JWT user ID</span>
+        <span className={result.jwtUserId != null ? 'text-primary' : 'text-muted-foreground/60 italic'}>
+          {result.jwtUserId ?? 'could not parse'}
+          {result.jwtExpired && <span className="ml-2 text-red-400 text-[10px]">⚠ JWT expired</span>}
+        </span>
+
+        <span className="text-muted-foreground">Body field</span>
+        <span className="text-foreground font-bold">{result.bodyField}</span>
+
+        <span className="text-muted-foreground">Body {result.bodyField}</span>
+        <span className={result.bodyUserId != null ? 'text-foreground' : 'text-muted-foreground/60 italic'}>
+          {result.bodyUserId ?? 'not found'}
+        </span>
+
+        <span className="text-muted-foreground">JWT ↔ body match</span>
+        <span className={result.jwtBodyMatch ? 'text-green-400' : 'text-red-400'}>
+          {result.jwtBodyMatch ? '✓ match (expected)' : '✗ mismatch (JWT may be wrong)'}
+        </span>
+      </div>
+
+      {/* Probe table */}
+      <div className="border border-border/50 rounded-md overflow-hidden">
+        <table className="w-full text-left text-sm font-mono">
+          <thead className="bg-muted/30 text-xs">
+            <tr>
+              <th className="px-3 py-2 border-b w-32 text-muted-foreground">Sent {result.bodyField}</th>
+              <th className="px-3 py-2 border-b w-24 text-muted-foreground">Duration</th>
+              <th className="px-3 py-2 border-b w-24 text-muted-foreground">Status</th>
+              <th className="px-3 py-2 border-b text-muted-foreground">Body / Error</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/30">
+            {(result.probes ?? []).map((p: any, i: number) => {
+              const bodyStr = typeof p.body === 'string' ? p.body : p.body ? JSON.stringify(p.body) : '';
+              const hasMore = bodyStr && bodyStr.length > 120;
+              const expanded = expandedIdx === i;
+              return (
+                <tr key={i} className={`hover:bg-muted/10 transition-colors align-top ${p.committed ? 'bg-red-400/5' : 'bg-green-400/5'}`}>
+                  <td className="px-3 py-2">
+                    <div className="text-[10px] text-muted-foreground mb-0.5">{p.label}</div>
+                    <div className="text-primary font-bold break-all">{String(p.sentValue)}</div>
+                  </td>
+                  <td className="px-3 py-2">{p.durationMs}ms</td>
+                  <td className="px-3 py-2">
+                    <Badge variant={getStatusVariant(p.status)}>{p.status || 'err'}</Badge>
+                    {p.committed && <div className="text-[9px] text-red-400 mt-0.5">⚠ committed</div>}
+                    {!p.committed && p.status > 0 && <div className="text-[9px] text-green-400 mt-0.5">safe</div>}
+                  </td>
+                  <td className="px-3 py-2">
+                    {p.error ? (
+                      <span className="text-destructive text-[11px] break-all">{p.error}</span>
                     ) : bodyStr ? (
                       <div
                         className={`flex gap-2 ${hasMore ? 'cursor-pointer' : ''}`}

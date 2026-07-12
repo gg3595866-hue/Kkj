@@ -702,6 +702,151 @@ async function runCross(opts: {
   return results;
 }
 
+// ─── Technique: Identity Mismatch Probe ──────────────────────────────────────
+// The game server validates that JWT.sub matches the UI field in the POST body.
+// This probe exploits that binding: it sends requests where UI does NOT match
+// the JWT sub. If all mismatches are rejected (non-2xx), the server enforces
+// the JWT↔UI constraint and mismatched-UI requests are guaranteed not to
+// register any action — completely safe probing without consuming your AN counter.
+//
+// Strategy:
+//  1. Decode JWT from auth header, extract numeric user-id from sub claim
+//  2. Extract the current UI value from the body
+//  3. Send N probes with deliberately wrong UI values
+//  4. Verdict: all rejected → jwt_bound (safe); any 2xx → ui_independent (risky)
+async function runIdentityProbe(
+  url: string,
+  method: string,
+  headers: Record<string, string>,
+  body: string | null | undefined,
+  bodyField: string
+): Promise<unknown> {
+  // ── 1. Find and decode JWT ─────────────────────────────────────────────────
+  const isAuthKey = (k: string) =>
+    k.toLowerCase() === "x-auth" || k.toLowerCase() === "authorization";
+  const authEntry = Object.entries(headers).find(([k]) => isAuthKey(k));
+  const rawHeaderVal = authEntry?.[1] ?? "";
+  const rawToken = rawHeaderVal.startsWith("Bearer ") ? rawHeaderVal.slice(7) : rawHeaderVal;
+
+  let jwtSub: string | null = null;
+  let jwtUserId: number | null = null;
+  let jwtExp: number | null = null;
+  let jwtExpired = false;
+
+  if (rawToken) {
+    try {
+      const parts = rawToken.split(".");
+      const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf-8"));
+      jwtSub = payload.sub ?? null;
+      jwtExp = typeof payload.exp === "number" ? payload.exp : null;
+      jwtExpired = jwtExp !== null && jwtExp * 1000 < Date.now();
+      if (typeof jwtSub === "string") {
+        const m = jwtSub.match(/(\d+)$/);
+        if (m) jwtUserId = parseInt(m[1], 10);
+      }
+    } catch {
+      // invalid JWT — continue, note it in output
+    }
+  }
+
+  // ── 2. Parse body and find the target field ────────────────────────────────
+  let baseObj: Record<string, unknown> = {};
+  let bodyUserId: number | null = null;
+  try {
+    if (body) {
+      baseObj = JSON.parse(body);
+      const val = baseObj[bodyField];
+      if (typeof val === "number") bodyUserId = val;
+      else if (typeof val === "string") bodyUserId = parseInt(val, 10) || null;
+    }
+  } catch {
+    // body not JSON
+  }
+
+  const jwtBodyMatch =
+    jwtUserId !== null && bodyUserId !== null && jwtUserId === bodyUserId;
+
+  // ── 3. Build mismatch probe variants ──────────────────────────────────────
+  // Each probe sends the real JWT but with a different UI so JWT.sub ≠ body.UI
+  const variants: Array<{ label: string; value: number | string }> = [
+    { label: "jwt_id + 1", value: (jwtUserId ?? 9999) + 1 },
+    { label: "jwt_id - 1", value: (jwtUserId ?? 9999) - 1 },
+    { label: "zero", value: 0 },
+    { label: "large fake", value: 9999999999 },
+    { label: "string fake", value: "PROBE_FAKE" },
+  ];
+
+  const probeResults = [];
+
+  for (const variant of variants) {
+    const patchedBody = JSON.stringify({ ...baseObj, [bodyField]: variant.value });
+    const t0 = Date.now();
+    try {
+      const resp = await undiciFetch(url, {
+        method,
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: patchedBody,
+        // @ts-expect-error undici dispatcher
+        dispatcher: insecureAgent,
+        signal: AbortSignal.timeout(12_000),
+        redirect: "follow",
+      });
+      const durationMs = Date.now() - t0;
+      const responseHeaders: Record<string, string> = {};
+      resp.headers.forEach((v, k) => { responseHeaders[k] = v; });
+      const respBody = await resp.text().catch(() => null);
+      const committed = resp.status >= 200 && resp.status < 300;
+      probeResults.push({
+        label: variant.label,
+        sentValue: variant.value,
+        committed,
+        durationMs,
+        status: resp.status,
+        statusText: resp.statusText || String(resp.status),
+        responseHeaders,
+        body: respBody && respBody.length > 4_000 ? respBody.slice(0, 4_000) + "\n…(truncated)" : respBody,
+        error: null,
+        note: committed
+          ? `⚠ 2xx — server accepted mismatched ${bodyField}; action may have been registered`
+          : `Rejected (${resp.status}) — server enforced ${bodyField}↔JWT binding`,
+      });
+    } catch (err: unknown) {
+      probeResults.push({
+        label: variant.label,
+        sentValue: variant.value,
+        committed: false,
+        durationMs: Date.now() - t0,
+        status: 0,
+        statusText: "Error",
+        responseHeaders: {},
+        body: null,
+        error: err instanceof Error ? err.message : String(err),
+        note: `Network error. ${bodyField}=${variant.value}`,
+      });
+    }
+  }
+
+  // ── 4. Verdict ─────────────────────────────────────────────────────────────
+  const anyCommitted = probeResults.some(r => r.committed);
+  const allRejected  = probeResults.every(r => !r.committed);
+  const verdict: string = anyCommitted
+    ? "ui_independent"   // server doesn't validate JWT↔UI → probing is not safe this way
+    : allRejected
+    ? "jwt_bound"        // server enforces JWT↔UI binding → mismatched UI probes are completely safe
+    : "partial";
+
+  return {
+    jwtSub,
+    jwtUserId,
+    jwtExpired,
+    bodyField,
+    bodyUserId,
+    jwtBodyMatch,
+    verdict,
+    probes: probeResults,
+  };
+}
+
 // POST /api/proxy/probe
 probeRouter.post("/proxy/probe", async (req, res) => {
   const {
@@ -774,6 +919,11 @@ probeRouter.post("/proxy/probe", async (req, res) => {
           } else {
             output.validationprobe = await runValidationProbe(url, method, headers, body, validationPatches);
           }
+          break;
+        }
+        case "idprobe": {
+          const idBodyField: string = req.body.idBodyField ?? "UI";
+          output.idprobe = await runIdentityProbe(url, method, headers, body, idBodyField);
           break;
         }
         case "cross": {
