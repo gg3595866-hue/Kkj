@@ -1,0 +1,146 @@
+import { Router } from "express";
+import { fetch as undiciFetch, Agent } from "undici";
+
+const scanRouter = Router();
+
+const insecureAgent = new Agent({ connect: { rejectUnauthorized: false } });
+
+const DEFAULT_HEADERS: Record<string, string> = {
+  "User-Agent":
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+  Accept: "application/json, text/plain, */*",
+  "Accept-Language": "en-US,en;q=0.9",
+};
+
+function looksLikeData(body: string, status: number): boolean {
+  if (status === 0 || status >= 500) return false;
+  if (status === 404) return false;
+  if (!body || body.trim().length === 0) return false;
+  // Anything 2xx or 3xx that has a non-empty body counts
+  if (status >= 200 && status < 400) return true;
+  // 4xx with a JSON body that isn't just an error string may still be interesting
+  try {
+    const parsed = JSON.parse(body);
+    if (typeof parsed === "object" && parsed !== null) return true;
+  } catch {
+    // not json
+  }
+  return false;
+}
+
+// POST /api/proxy/scan
+scanRouter.post("/proxy/scan", async (req, res) => {
+  const {
+    baseUrl,
+    paths,
+    queryParams,
+    bearerToken,
+    authHeaderName,
+    headers: customHeaders = {},
+    postBody,
+  } = req.body;
+
+  if (!baseUrl || !Array.isArray(paths) || paths.length === 0) {
+    res.status(400).json({ error: "baseUrl and paths[] are required" });
+    return;
+  }
+
+  const base = baseUrl.replace(/\/$/, "");
+  const qs = queryParams ? `?${queryParams}` : "";
+
+  const requestHeaders: Record<string, string> = {
+    ...DEFAULT_HEADERS,
+    ...customHeaders,
+  };
+  if (bearerToken) {
+    const headerName =
+      authHeaderName && authHeaderName.trim()
+        ? authHeaderName.trim()
+        : "Authorization";
+    requestHeaders[headerName] = `Bearer ${bearerToken}`;
+  }
+
+  // Probe each path with GET, and optionally POST if GET gives nothing useful
+  const probes = paths.map(async (path: string) => {
+    const url = `${base}/${path}${qs}`;
+    const results = [];
+
+    for (const method of ["GET", "POST"] as const) {
+      // Skip POST if no body provided and GET already returned data
+      if (method === "POST" && !postBody && results.some((r) => r.hasData)) {
+        continue;
+      }
+
+      const startTime = Date.now();
+      try {
+        const opts: Parameters<typeof undiciFetch>[1] = {
+          method,
+          headers: {
+            ...requestHeaders,
+            ...(method === "POST" && postBody
+              ? { "Content-Type": "application/json" }
+              : {}),
+          },
+          // @ts-expect-error undici dispatcher
+          dispatcher: insecureAgent,
+          signal: AbortSignal.timeout(10_000),
+          redirect: "follow",
+        };
+
+        if (method === "POST" && postBody) {
+          opts.body = postBody;
+        }
+
+        const response = await undiciFetch(url, opts);
+        const durationMs = Date.now() - startTime;
+        const body = await response.text();
+        const truncated =
+          body.length > 5000 ? body.slice(0, 5000) + "\n...(truncated)" : body;
+        const hasData = looksLikeData(body, response.status);
+
+        results.push({
+          path,
+          method,
+          status: response.status,
+          statusText: response.statusText || String(response.status),
+          durationMs,
+          hasData,
+          body: truncated,
+          error: null,
+        });
+
+        // If we got data on GET, no need to try POST unless caller wants it
+        if (hasData && method === "GET" && !postBody) break;
+      } catch (err: unknown) {
+        const durationMs = Date.now() - startTime;
+        let errorMessage = "Unknown error";
+        if (err instanceof Error) {
+          if (err.name === "TimeoutError" || err.name === "AbortError") {
+            errorMessage = "Timed out (10s)";
+          } else {
+            errorMessage = err.message;
+          }
+        }
+        results.push({
+          path,
+          method,
+          status: 0,
+          statusText: "Network Error",
+          durationMs,
+          hasData: false,
+          body: null,
+          error: errorMessage,
+        });
+        break; // No point trying POST if GET errored at network level
+      }
+    }
+
+    // Return the most useful result (prefer hasData, else last)
+    return results.find((r) => r.hasData) ?? results[results.length - 1];
+  });
+
+  const results = await Promise.all(probes);
+  res.json(results);
+});
+
+export default scanRouter;

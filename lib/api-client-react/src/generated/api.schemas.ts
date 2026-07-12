@@ -9,6 +9,44 @@ export interface HealthStatus {
   status: string;
 }
 
+export type ScanInputHeaders = {[key: string]: string};
+
+export interface ScanInput {
+  /** Base URL to probe (e.g. https://1x-bet.mobi/games-frame/service-api/games-thimbles/) */
+  baseUrl: string;
+  /** List of endpoint path names to try (e.g. GetHistory, GetState) */
+  paths: string[];
+  /**
+     * Query string to append (e.g. language=en&whence=114)
+     * @nullable
+     */
+  queryParams?: string | null;
+  /** @nullable */
+  bearerToken?: string | null;
+  /** @nullable */
+  authHeaderName?: string | null;
+  headers?: ScanInputHeaders;
+  /**
+     * Optional POST body to try when GET returns nothing useful
+     * @nullable
+     */
+  postBody?: string | null;
+}
+
+export interface ScanResult {
+  path: string;
+  method: string;
+  status: number;
+  statusText?: string;
+  durationMs: number;
+  /** True if response looks like it contains real data */
+  hasData: boolean;
+  /** @nullable */
+  body?: string | null;
+  /** @nullable */
+  error?: string | null;
+}
+
 export interface ErrorResponse {
   error: string;
 }

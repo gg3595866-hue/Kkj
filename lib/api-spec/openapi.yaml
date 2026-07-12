@@ -133,6 +133,28 @@ paths:
         "204":
           description: Deleted
 
+  /proxy/scan:
+    post:
+      operationId: scanEndpoints
+      tags: [proxy]
+      summary: Probe multiple endpoint paths with the same auth token
+      description: Tries each endpoint path (GET then POST) without triggering game actions. Returns which paths respond with data.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ScanInput"
+      responses:
+        "200":
+          description: Scan results for each probed path
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ScanResult"
+
   /proxy/history:
     get:
       operationId: listRequestHistory
@@ -170,6 +192,62 @@ components:
           type: string
       required:
         - status
+
+    ScanInput:
+      type: object
+      required:
+        - baseUrl
+        - paths
+      properties:
+        baseUrl:
+          type: string
+          description: Base URL to probe (e.g. https://1x-bet.mobi/games-frame/service-api/games-thimbles/)
+        paths:
+          type: array
+          items:
+            type: string
+          description: List of endpoint path names to try (e.g. GetHistory, GetState)
+        queryParams:
+          type: ["string", "null"]
+          description: Query string to append (e.g. language=en&whence=114)
+        bearerToken:
+          type: ["string", "null"]
+        authHeaderName:
+          type: ["string", "null"]
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        postBody:
+          type: ["string", "null"]
+          description: Optional POST body to try when GET returns nothing useful
+
+    ScanResult:
+      type: object
+      required:
+        - path
+        - method
+        - status
+        - durationMs
+        - hasData
+      properties:
+        path:
+          type: string
+        method:
+          type: string
+        status:
+          type: integer
+        statusText:
+          type: string
+        durationMs:
+          type: integer
+        hasData:
+          type: boolean
+          description: True if response looks like it contains real data
+        body:
+          type: ["string", "null"]
+        error:
+          type: ["string", "null"]
 
     ErrorResponse:
       type: object

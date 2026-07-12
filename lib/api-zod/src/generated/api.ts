@@ -125,6 +125,33 @@ export const DeleteSavedRequestResponse = zod.void()
 
 
 /**
+ * Tries each endpoint path (GET then POST) without triggering game actions. Returns which paths respond with data.
+ * @summary Probe multiple endpoint paths with the same auth token
+ */
+export const ScanEndpointsBody = zod.object({
+  "baseUrl": zod.string().describe('Base URL to probe (e.g. https:\/\/1x-bet.mobi\/games-frame\/service-api\/games-thimbles\/)'),
+  "paths": zod.array(zod.string()).describe('List of endpoint path names to try (e.g. GetHistory, GetState)'),
+  "queryParams": zod.string().nullish().describe('Query string to append (e.g. language=en&whence=114)'),
+  "bearerToken": zod.string().nullish(),
+  "authHeaderName": zod.string().nullish(),
+  "headers": zod.record(zod.string(), zod.string()).optional(),
+  "postBody": zod.string().nullish().describe('Optional POST body to try when GET returns nothing useful')
+})
+
+export const ScanEndpointsResponseItem = zod.object({
+  "path": zod.string(),
+  "method": zod.string(),
+  "status": zod.number(),
+  "statusText": zod.string().optional(),
+  "durationMs": zod.number(),
+  "hasData": zod.boolean().describe('True if response looks like it contains real data'),
+  "body": zod.string().nullish(),
+  "error": zod.string().nullish()
+})
+export const ScanEndpointsResponse = zod.array(ScanEndpointsResponseItem)
+
+
+/**
  * @summary List request history
  */
 export const listRequestHistoryQueryLimitDefault = 50;

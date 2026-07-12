@@ -22,3 +22,6 @@ export * from './savedRequestHeaders';
 export * from './savedRequestInput';
 export * from './savedRequestInputHeaders';
 export * from './savedRequestInputMethod';
+export * from './scanInput';
+export * from './scanInputHeaders';
+export * from './scanResult';
