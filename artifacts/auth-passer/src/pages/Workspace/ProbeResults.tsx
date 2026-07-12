@@ -117,6 +117,8 @@ function TimingRow({ round, index }: { round: any, index: number }) {
               </span>
             )}
           </div>
+        ) : round.error ? (
+          <span className="text-destructive text-[11px] font-mono break-all">{round.error}</span>
         ) : (
           <span className="text-muted-foreground/50 text-[11px] italic">Empty body</span>
         )}
@@ -162,13 +164,24 @@ function PartialResult({ round }: { round: any }) {
           </div>
         )}
         
-        {bodyStr && (
+        {round.error && (
+          <div>
+            <div className="text-xs text-muted-foreground mb-1 font-mono">Error</div>
+            <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 p-3 rounded font-mono whitespace-pre-wrap break-all">
+              {round.error}
+            </div>
+          </div>
+        )}
+
+        {bodyStr ? (
           <div>
             <div className="text-xs text-muted-foreground mb-1 font-mono">Body (first 512 bytes)</div>
             <pre className="text-[11px] font-mono whitespace-pre-wrap break-all bg-background p-3 rounded border border-border/30 max-h-40 overflow-y-auto">
               {bodyStr}
             </pre>
           </div>
+        ) : !round.error && (
+          <span className="text-muted-foreground/50 text-[11px] italic">Empty body</span>
         )}
       </div>
     </div>
@@ -194,14 +207,25 @@ function Expect100Result({ round }: { round: any }) {
             {round.note}
           </div>
         )}
+
+        {round.error && (
+          <div>
+            <div className="text-xs text-muted-foreground mb-1 font-mono">Error</div>
+            <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 p-3 rounded font-mono whitespace-pre-wrap break-all">
+              {round.error}
+            </div>
+          </div>
+        )}
         
-        {bodyStr && (
+        {bodyStr ? (
           <div>
             <div className="text-xs text-muted-foreground mb-1 font-mono">Body</div>
             <pre className="text-[11px] font-mono whitespace-pre-wrap break-all bg-background p-3 rounded border border-border/30 max-h-40 overflow-y-auto">
               {bodyStr}
             </pre>
           </div>
+        ) : !round.error && (
+          <span className="text-muted-foreground/50 text-[11px] italic">Empty body</span>
         )}
       </div>
     </div>
