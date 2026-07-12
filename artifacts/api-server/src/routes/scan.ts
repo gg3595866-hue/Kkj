@@ -4,7 +4,38 @@ import { describeFetchError } from "../lib/fetch-error";
 
 const scanRouter = Router();
 
-const insecureAgent = new Agent({ connect: { rejectUnauthorized: false } });
+// Scanning fires many probes at the same origin at once. undici's default
+// pool caps at 10 connections/origin, so with a wordlist of 60+ paths most
+// probes queue behind the first 10 and eventually hit the per-request
+// timeout waiting for a socket — even though the target responds fine to
+// each individual request. Raise the pool size so our own client isn't the
+// bottleneck (concurrency is additionally throttled below).
+const insecureAgent = new Agent({
+  connect: { rejectUnauthorized: false },
+  connections: 32,
+});
+
+// Simple bounded-concurrency runner: process `items` with at most `limit`
+// in flight at a time, instead of firing everything at once.
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (true) {
+      const i = nextIndex++;
+      if (i >= items.length) return;
+      results[i] = await fn(items[i]);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
+}
 
 const DEFAULT_HEADERS: Record<string, string> = {
   "User-Agent":
@@ -61,8 +92,10 @@ scanRouter.post("/proxy/scan", async (req, res) => {
     requestHeaders[headerName] = `Bearer ${bearerToken}`;
   }
 
-  // Probe each path with GET, and optionally POST if GET gives nothing useful
-  const probes = paths.map(async (path: string) => {
+  // Probe each path with GET, and optionally POST if GET gives nothing useful.
+  // Bounded concurrency (not a full Promise.all fan-out) so the target's
+  // response time doesn't cause probes to queue past their own timeout.
+  const probeOne = async (path: string) => {
     const url = `${base}/${path}${qs}`;
     const results = [];
 
@@ -140,9 +173,9 @@ scanRouter.post("/proxy/scan", async (req, res) => {
 
     // Return the most useful result (prefer hasData, else last)
     return results.find((r) => r.hasData) ?? results[results.length - 1];
-  });
+  };
 
-  const results = await Promise.all(probes);
+  const results = await mapWithConcurrency(paths, 10, probeOne);
   res.json(results);
 });
 
