@@ -155,6 +155,7 @@ export const BypassProxyResponse = zod.object({
  */
 export const probeRequestBodyMethodDefault = `POST`;
 export const probeRequestBodyTimingRoundsDefault = 5;
+export const probeRequestBodyRaceConnectionsDefault = 10;
 
 export const ProbeRequestBody = zod.object({
   "url": zod.string(),
@@ -163,8 +164,9 @@ export const ProbeRequestBody = zod.object({
   "bearerToken": zod.string().nullish(),
   "authHeaderName": zod.string().nullish(),
   "body": zod.string().nullish(),
-  "techniques": zod.array(zod.enum(['timing', 'partial', 'expect100'])).describe('timing — send N identical requests and record response time + body for each (reveals variance in server state).\npartial — send full request, read response status+headers then immediately abort before reading body (avoids fully consuming the response stream).\nexpect100 — send headers with Expect:100-continue and withhold the body; captures whatever the server replies before it receives payload.\n'),
-  "timingRounds": zod.number().default(probeRequestBodyTimingRoundsDefault).describe('Number of requests to send for the timing technique')
+  "techniques": zod.array(zod.enum(['timing', 'partial', 'expect100', 'race'])).describe('timing — send N identical requests and record response time + body for each (reveals variance in server state).\npartial — send full request, read response status+headers then immediately abort before reading body (avoids fully consuming the response stream).\nexpect100 — send headers with Expect:100-continue and withhold the body; captures whatever the server replies before it receives payload.\nrace — open N raw connections, hold every request just short of complete, then release the final bytes on all connections in the same tick (single-packet \/ last-byte-sync attack) so they land inside the server\'s check-then-act window instead of being serialized.\n'),
+  "timingRounds": zod.number().default(probeRequestBodyTimingRoundsDefault).describe('Number of requests to send for the timing technique'),
+  "raceConnections": zod.number().default(probeRequestBodyRaceConnectionsDefault).describe('Number of simultaneous connections to open for the race technique')
 })
 
 export const ProbeRequestResponse = zod.object({
@@ -194,6 +196,24 @@ export const ProbeRequestResponse = zod.object({
   "body": zod.string().nullish(),
   "error": zod.string().nullish(),
   "note": zod.string().optional().describe('Human-readable description of what happened')
+}).optional(),
+  "race": zod.object({
+  "releaseSkewMs": zod.number().describe('Time spread (ms) between the first and last final-byte write across all connections — lower means a tighter synchronized release'),
+  "successCount": zod.number().describe('How many of the N connections received a \"success\" response (2xx, or non-error status) rather than a decline'),
+  "raceLikely": zod.boolean().describe('True when more than one connection succeeded — evidence the requests landed inside the same check-then-act window'),
+  "note": zod.string().optional(),
+  "error": zod.string().nullish(),
+  "attempts": zod.array(zod.object({
+  "index": zod.number(),
+  "status": zod.number(),
+  "statusText": zod.string().optional(),
+  "responseHeaders": zod.record(zod.string(), zod.string()).optional(),
+  "body": zod.string().nullish(),
+  "error": zod.string().nullish(),
+  "connectMs": zod.number().optional().describe('Time from dial to connection established, before the synchronized release'),
+  "suffixSentAt": zod.number().optional().describe('Timestamp (ms, relative to batch start) when this connection\'s final bytes were written'),
+  "firstByteAtMs": zod.number().nullish().describe('Time (ms, relative to suffix release) until the first response byte arrived on this connection')
+}))
 }).optional()
 })
 

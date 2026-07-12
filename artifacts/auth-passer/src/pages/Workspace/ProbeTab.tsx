@@ -13,15 +13,17 @@ export function ProbeTab({ request, setRequest, setResponse }: { request: AppReq
   const [techniques, setTechniques] = useState({
     timing: true,
     partial: true,
-    expect100: false
+    expect100: false,
+    race: false
   });
   
   const [timingRounds, setTimingRounds] = useState(5);
+  const [raceConnections, setRaceConnections] = useState(10);
 
   const handleRun = () => {
     const selectedTechniques = Object.entries(techniques)
       .filter(([_, v]) => v)
-      .map(([k]) => k as "timing" | "partial" | "expect100");
+      .map(([k]) => k as "timing" | "partial" | "expect100" | "race");
       
     if (selectedTechniques.length === 0) return;
 
@@ -39,7 +41,8 @@ export function ProbeTab({ request, setRequest, setResponse }: { request: AppReq
         authHeaderName: request.authHeaderName || undefined,
         body: ['POST', 'PUT', 'PATCH'].includes(request.method) ? request.body : undefined,
         techniques: selectedTechniques,
-        timingRounds: techniques.timing ? timingRounds : undefined
+        timingRounds: techniques.timing ? timingRounds : undefined,
+        raceConnections: techniques.race ? raceConnections : undefined
       }
     }, {
       onSuccess: (res) => {
@@ -129,6 +132,32 @@ export function ProbeTab({ request, setRequest, setResponse }: { request: AppReq
               <div>
                 <div className="text-sm font-medium">Expect-100</div>
                 <div className="text-xs text-muted-foreground">Sends request headers with Expect: 100-continue but withholds the body.</div>
+              </div>
+            </label>
+
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input 
+                type="checkbox" 
+                className="mt-1 accent-primary"
+                checked={techniques.race}
+                onChange={e => setTechniques(prev => ({...prev, race: e.target.checked}))}
+              />
+              <div>
+                <div className="text-sm font-medium">Race (single-packet attack)</div>
+                <div className="text-xs text-muted-foreground">Opens N raw connections, holds every request one byte short of complete, then releases the final byte on all of them in the same tick — bypassing fetch/undici pooling jitter entirely so requests land inside the server's check-then-act window instead of being serialized.</div>
+                {techniques.race && (
+                  <div className="mt-2 flex items-center gap-2" onClick={e => e.preventDefault()}>
+                    <span className="text-xs text-muted-foreground">Connections:</span>
+                    <Input 
+                      type="number" 
+                      min={2} 
+                      max={50} 
+                      value={raceConnections}
+                      onChange={e => setRaceConnections(parseInt(e.target.value) || 2)}
+                      className="w-20 h-7 text-xs"
+                    />
+                  </div>
+                )}
               </div>
             </label>
           </div>

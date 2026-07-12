@@ -59,6 +59,7 @@ export const ProbeInputTechniquesItem = {
   timing: 'timing',
   partial: 'partial',
   expect100: 'expect100',
+  race: 'race',
 } as const;
 
 export interface ProbeInput {
@@ -75,10 +76,13 @@ export interface ProbeInput {
      * timing — send N identical requests and record response time + body for each (reveals variance in server state).
      * partial — send full request, read response status+headers then immediately abort before reading body (avoids fully consuming the response stream).
      * expect100 — send headers with Expect:100-continue and withhold the body; captures whatever the server replies before it receives payload.
+     * race — open N raw connections, hold every request just short of complete, then release the final bytes on all connections in the same tick (single-packet / last-byte-sync attack) so they land inside the server's check-then-act window instead of being serialized.
      */
   techniques: ProbeInputTechniquesItem[];
   /** Number of requests to send for the timing technique */
   timingRounds?: number;
+  /** Number of simultaneous connections to open for the race technique */
+  raceConnections?: number;
 }
 
 export type ProbeRoundResponseHeaders = {[key: string]: string};
@@ -96,10 +100,46 @@ export interface ProbeRound {
   note?: string;
 }
 
+export type RaceAttemptResponseHeaders = {[key: string]: string};
+
+export interface RaceAttempt {
+  index: number;
+  status: number;
+  statusText?: string;
+  responseHeaders?: RaceAttemptResponseHeaders;
+  /** @nullable */
+  body?: string | null;
+  /** @nullable */
+  error?: string | null;
+  /** Time from dial to connection established, before the synchronized release */
+  connectMs?: number;
+  /** Timestamp (ms, relative to batch start) when this connection's final bytes were written */
+  suffixSentAt?: number;
+  /**
+     * Time (ms, relative to suffix release) until the first response byte arrived on this connection
+     * @nullable
+     */
+  firstByteAtMs?: number | null;
+}
+
+export interface RaceResult {
+  /** Time spread (ms) between the first and last final-byte write across all connections — lower means a tighter synchronized release */
+  releaseSkewMs: number;
+  /** How many of the N connections received a "success" response (2xx, or non-error status) rather than a decline */
+  successCount: number;
+  /** True when more than one connection succeeded — evidence the requests landed inside the same check-then-act window */
+  raceLikely: boolean;
+  note?: string;
+  /** @nullable */
+  error?: string | null;
+  attempts: RaceAttempt[];
+}
+
 export interface ProbeOutput {
   timing?: ProbeRound[];
   partial?: ProbeRound;
   expect100?: ProbeRound;
+  race?: RaceResult;
 }
 
 export type ScanInputHeaders = {[key: string]: string};

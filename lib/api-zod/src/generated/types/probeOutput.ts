@@ -6,9 +6,11 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { ProbeRound } from './probeRound';
+import type { RaceResult } from './raceResult';
 
 export interface ProbeOutput {
   timing?: ProbeRound[];
   partial?: ProbeRound;
   expect100?: ProbeRound;
+  race?: RaceResult;
 }

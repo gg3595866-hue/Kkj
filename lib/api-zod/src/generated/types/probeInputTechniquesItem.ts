@@ -13,4 +13,5 @@ export const ProbeInputTechniquesItem = {
   timing: 'timing',
   partial: 'partial',
   expect100: 'expect100',
+  race: 'race',
 } as const;

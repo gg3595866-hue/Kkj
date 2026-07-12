@@ -22,8 +22,11 @@ export interface ProbeInput {
      * timing — send N identical requests and record response time + body for each (reveals variance in server state).
      * partial — send full request, read response status+headers then immediately abort before reading body (avoids fully consuming the response stream).
      * expect100 — send headers with Expect:100-continue and withhold the body; captures whatever the server replies before it receives payload.
+     * race — open N raw connections, hold every request just short of complete, then release the final bytes on all connections in the same tick (single-packet / last-byte-sync attack) so they land inside the server's check-then-act window instead of being serialized.
      */
   techniques: ProbeInputTechniquesItem[];
   /** Number of requests to send for the timing technique */
   timingRounds?: number;
+  /** Number of simultaneous connections to open for the race technique */
+  raceConnections?: number;
 }

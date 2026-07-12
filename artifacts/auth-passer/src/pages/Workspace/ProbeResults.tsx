@@ -24,8 +24,9 @@ export function ProbeResults({ response }: { response: any }) {
             {response.timing && response.timing.length > 0 && <TimingResult rounds={response.timing} />}
             {response.partial && <PartialResult round={response.partial} />}
             {response.expect100 && <Expect100Result round={response.expect100} />}
+            {response.race && <RaceResultView race={response.race} />}
             
-            {!response.timing && !response.partial && !response.expect100 && (
+            {!response.timing && !response.partial && !response.expect100 && !response.race && (
               <div className="text-muted-foreground text-sm font-mono text-center mt-10">
                 No probe techniques were executed.
               </div>
@@ -183,6 +184,98 @@ function PartialResult({ round }: { round: any }) {
         ) : !round.error && (
           <span className="text-muted-foreground/50 text-[11px] italic">Empty body</span>
         )}
+      </div>
+    </div>
+  );
+}
+
+function RaceResultView({ race }: { race: any }) {
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+  const attempts: any[] = race.attempts || [];
+
+  return (
+    <div className="space-y-3">
+      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Race (single-packet attack)</h3>
+      <div className="p-4 border border-border/50 rounded-md space-y-4 bg-muted/5">
+        <div className="flex items-center gap-4 flex-wrap">
+          <Badge variant={race.raceLikely ? 'error' : 'success'}>
+            {race.raceLikely ? 'RACE CONDITION LIKELY' : 'No race detected'}
+          </Badge>
+          <div className="text-sm font-mono">
+            {race.successCount} / {attempts.length} succeeded
+          </div>
+          <div className="text-sm font-mono text-muted-foreground">
+            release skew: {race.releaseSkewMs}ms
+          </div>
+        </div>
+
+        {race.error && (
+          <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 p-3 rounded font-mono whitespace-pre-wrap break-all">
+            {race.error}
+          </div>
+        )}
+
+        {race.note && (
+          <div className="text-sm text-primary bg-primary/10 border border-primary/20 p-3 rounded font-mono">
+            {race.note}
+          </div>
+        )}
+
+        <div className="border border-border/50 rounded-md overflow-hidden">
+          <table className="w-full text-left text-sm font-mono">
+            <thead className="bg-muted/30 text-xs">
+              <tr>
+                <th className="px-3 py-2 border-b w-16 text-muted-foreground">#</th>
+                <th className="px-3 py-2 border-b w-24 text-muted-foreground">Status</th>
+                <th className="px-3 py-2 border-b w-28 text-muted-foreground">Connect</th>
+                <th className="px-3 py-2 border-b w-28 text-muted-foreground">Suffix sent</th>
+                <th className="px-3 py-2 border-b text-muted-foreground">Body / Error</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border/30">
+              {attempts.map((a, i) => {
+                const bodyStr = typeof a.body === 'string' ? a.body : a.body ? JSON.stringify(a.body) : '';
+                const hasMore = bodyStr && bodyStr.length > 100;
+                const expanded = expandedIdx === i;
+                return (
+                  <tr key={i} className="hover:bg-muted/10 transition-colors align-top">
+                    <td className="px-3 py-2 text-muted-foreground">{a.index}</td>
+                    <td className="px-3 py-2">
+                      <Badge variant={getStatusVariant(a.status)}>{a.status || 'err'}</Badge>
+                    </td>
+                    <td className="px-3 py-2 text-muted-foreground">
+                      {typeof a.connectMs === 'number' ? `${a.connectMs}ms` : '—'}
+                    </td>
+                    <td className="px-3 py-2 text-muted-foreground">
+                      {typeof a.suffixSentAt === 'number' ? `+${a.suffixSentAt}ms` : '—'}
+                    </td>
+                    <td className="px-3 py-2">
+                      {a.error ? (
+                        <span className="text-destructive text-[11px] break-all">{a.error}</span>
+                      ) : bodyStr ? (
+                        <div 
+                          className={`flex gap-2 ${hasMore ? 'cursor-pointer' : ''}`} 
+                          onClick={() => hasMore && setExpandedIdx(expanded ? null : i)}
+                        >
+                          <span className="text-muted-foreground whitespace-pre-wrap flex-1 break-all text-[11px] leading-tight">
+                            {expanded ? bodyStr : bodyStr.substring(0, 100) + (hasMore ? '...' : '')}
+                          </span>
+                          {hasMore && (
+                            <span className="text-muted-foreground shrink-0 mt-0.5">
+                              {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground/50 text-[11px] italic">Empty body</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

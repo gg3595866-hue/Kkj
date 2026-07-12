@@ -318,15 +318,20 @@ components:
           type: array
           items:
             type: string
-            enum: [timing, partial, expect100]
+            enum: [timing, partial, expect100, race]
           description: |
             timing — send N identical requests and record response time + body for each (reveals variance in server state).
             partial — send full request, read response status+headers then immediately abort before reading body (avoids fully consuming the response stream).
             expect100 — send headers with Expect:100-continue and withhold the body; captures whatever the server replies before it receives payload.
+            race — open N raw connections, hold every request just short of complete, then release the final bytes on all connections in the same tick (single-packet / last-byte-sync attack) so they land inside the server's check-then-act window instead of being serialized.
         timingRounds:
           type: integer
           default: 5
           description: Number of requests to send for the timing technique
+        raceConnections:
+          type: integer
+          default: 10
+          description: Number of simultaneous connections to open for the race technique
 
     ProbeOutput:
       type: object
@@ -339,6 +344,64 @@ components:
           $ref: "#/components/schemas/ProbeRound"
         expect100:
           $ref: "#/components/schemas/ProbeRound"
+        race:
+          $ref: "#/components/schemas/RaceResult"
+
+    RaceResult:
+      type: object
+      required:
+        - releaseSkewMs
+        - successCount
+        - raceLikely
+        - attempts
+      properties:
+        releaseSkewMs:
+          type: number
+          description: Time spread (ms) between the first and last final-byte write across all connections — lower means a tighter synchronized release
+        successCount:
+          type: integer
+          description: How many of the N connections received a "success" response (2xx, or non-error status) rather than a decline
+        raceLikely:
+          type: boolean
+          description: True when more than one connection succeeded — evidence the requests landed inside the same check-then-act window
+        note:
+          type: string
+        error:
+          type: ["string", "null"]
+        attempts:
+          type: array
+          items:
+            $ref: "#/components/schemas/RaceAttempt"
+
+    RaceAttempt:
+      type: object
+      required:
+        - index
+        - status
+      properties:
+        index:
+          type: integer
+        status:
+          type: integer
+        statusText:
+          type: string
+        responseHeaders:
+          type: object
+          additionalProperties:
+            type: string
+        body:
+          type: ["string", "null"]
+        error:
+          type: ["string", "null"]
+        connectMs:
+          type: number
+          description: Time from dial to connection established, before the synchronized release
+        suffixSentAt:
+          type: number
+          description: Timestamp (ms, relative to batch start) when this connection's final bytes were written
+        firstByteAtMs:
+          type: ["number", "null"]
+          description: Time (ms, relative to suffix release) until the first response byte arrived on this connection
 
     ProbeRound:
       type: object

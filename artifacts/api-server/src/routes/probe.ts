@@ -2,6 +2,7 @@ import { Router } from "express";
 import { fetch as undiciFetch, Agent, request as undiciRequest } from "undici";
 import type { IncomingHttpHeaders } from "undici/types/header";
 import * as zlib from "node:zlib";
+import { runRace } from "./probe-race.js";
 
 const probeRouter = Router();
 
@@ -376,6 +377,7 @@ probeRouter.post("/proxy/probe", async (req, res) => {
     body,
     techniques = [],
     timingRounds = 5,
+    raceConnections = 10,
   } = req.body;
 
   if (!url) {
@@ -383,7 +385,7 @@ probeRouter.post("/proxy/probe", async (req, res) => {
     return;
   }
   if (!Array.isArray(techniques) || techniques.length === 0) {
-    res.status(400).json({ error: "techniques[] is required (timing | partial | expect100)" });
+    res.status(400).json({ error: "techniques[] is required (timing | partial | expect100 | race)" });
     return;
   }
 
@@ -408,6 +410,9 @@ probeRouter.post("/proxy/probe", async (req, res) => {
           break;
         case "expect100":
           output.expect100 = await runExpect100(url, method, headers, body);
+          break;
+        case "race":
+          output.race = await runRace({ url, method, headers, body, connections: raceConnections });
           break;
       }
     })
