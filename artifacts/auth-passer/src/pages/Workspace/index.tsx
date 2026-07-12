@@ -7,6 +7,8 @@ import { ProbeTab } from './ProbeTab';
 import { ProbeResults } from './ProbeResults';
 import { BypassTab } from './BypassTab';
 import { BypassResults } from './BypassResults';
+import { ScanTab } from './ScanTab';
+import { ScanResults } from './ScanResults';
 import { AppRequestState } from './types';
 import { ProxyResponse } from '@workspace/api-client-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/core';
@@ -29,6 +31,12 @@ export default function Workspace() {
   });
 
   const [response, setResponse] = useState<ProxyResponse | { error: any } | null>(null);
+  const [activeTab, setActiveTab] = useState('builder');
+
+  const handleRouteThrough = (url: string) => {
+    setRequest(prev => ({ ...prev, url }));
+    setActiveTab('builder');
+  };
 
   useEffect(() => {
     localStorage.setItem('auth_passer_bearer', request.bearerToken);
@@ -52,12 +60,13 @@ export default function Workspace() {
         <ResizeHandle />
         
         <Panel defaultSize={40} minSize={30}>
-          <Tabs defaultValue="builder" className="flex flex-col h-full border-r">
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col h-full border-r">
             <div className="h-10 border-b flex items-center px-4 shrink-0 bg-card">
               <TabsList className="bg-background">
                 <TabsTrigger value="builder">Builder</TabsTrigger>
                 <TabsTrigger value="probe">Probe</TabsTrigger>
                 <TabsTrigger value="bypass">Bypass</TabsTrigger>
+                <TabsTrigger value="scan">Scan</TabsTrigger>
               </TabsList>
             </div>
             <TabsContent value="builder" className="flex-1 overflow-hidden m-0 data-[state=active]:flex flex-col">
@@ -69,6 +78,9 @@ export default function Workspace() {
             <TabsContent value="bypass" className="flex-1 overflow-hidden m-0 data-[state=active]:flex flex-col">
               <BypassTab request={request} setRequest={setRequest} setResponse={setResponse} />
             </TabsContent>
+            <TabsContent value="scan" className="flex-1 overflow-hidden m-0 data-[state=active]:flex flex-col">
+              <ScanTab request={request} setRequest={setRequest} setResponse={setResponse} onRouteThrough={handleRouteThrough} />
+            </TabsContent>
           </Tabs>
         </Panel>
         
@@ -79,6 +91,8 @@ export default function Workspace() {
             <ProbeResults response={response} />
           ) : response && (response as any)._isBypass ? (
             <BypassResults response={response} />
+          ) : response && (response as any)._isScan ? (
+            <ScanResults response={response} baseUrl={(response as any).baseUrl} queryParams={(response as any).queryParams} onRouteThrough={handleRouteThrough} />
           ) : (
             <ResponsePanel response={response} />
           )}
