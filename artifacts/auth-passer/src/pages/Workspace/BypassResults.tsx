@@ -156,43 +156,17 @@ export function BypassResults({ response }: { response: any }) {
           <Section title="Host Swap" icon={<Repeat className="w-4 h-4" />}>
             <div className="space-y-4">
               <div className="text-muted-foreground text-xs">{data.hostswap.note}</div>
-              <div className="border border-border/50 rounded-md overflow-hidden bg-muted/5">
-                <table className="w-full text-left font-mono text-xs block overflow-x-auto">
-                  <thead className="w-full table border-b border-border/50 bg-muted/20">
-                    <tr>
-                      <th className="px-3 py-2 text-muted-foreground font-medium w-1/3">Alt Host</th>
-                      <th className="px-3 py-2 text-muted-foreground font-medium">Status</th>
-                      <th className="px-3 py-2 text-muted-foreground font-medium">Duration</th>
-                      <th className="px-3 py-2 text-muted-foreground font-medium w-1/3">Note</th>
-                    </tr>
-                  </thead>
-                  <tbody className="w-full table">
-                    {data.hostswap.results?.map((res, i) => (
-                      <tr key={i} className="border-b border-border/10 last:border-0">
-                        <td className="px-3 py-2 break-all">{res.altHost}</td>
-                        <td className="px-3 py-2 whitespace-nowrap">
-                          <StatusBadge status={res.status} statusText={res.statusText} />
-                        </td>
-                        <td className="px-3 py-2 whitespace-nowrap">{res.durationMs}ms</td>
-                        <td className="px-3 py-2 text-muted-foreground">
-                          {res.error ? (
-                            <span className="text-red-500 break-all">{res.error}</span>
-                          ) : (
-                            res.body ? "Body returned" : ""
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                    {(!data.hostswap.results || data.hostswap.results.length === 0) && (
-                      <tr>
-                        <td colSpan={4} className="px-3 py-4 text-center text-muted-foreground">
-                          No host swap results.
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
+              {(!data.hostswap.results || data.hostswap.results.length === 0) ? (
+                <div className="border border-border/50 rounded-md overflow-hidden bg-muted/5 px-3 py-4 text-center text-muted-foreground text-xs">
+                  No host swap results.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {data.hostswap.results.map((res, i) => (
+                    <HostSwapRow key={i} result={res} />
+                  ))}
+                </div>
+              )}
             </div>
           </Section>
         )}
@@ -238,6 +212,84 @@ function StatusBadge({ status, statusText }: { status: number; statusText?: stri
     <span className={cn("px-2 py-0.5 rounded border font-bold inline-flex items-center text-[10px]", color)}>
       {status === 0 ? 'ERR' : status} {statusText && statusText.length > 0 ? statusText : ''}
     </span>
+  );
+}
+
+function HostSwapRow({ result }: { result: any }) {
+  const [open, setOpen] = useState(false);
+  const hasDetails = !!(result.error || result.body || (result.headers && Object.keys(result.headers).length > 0));
+
+  return (
+    <div className="border border-border/50 rounded-md overflow-hidden bg-muted/5 font-mono text-xs">
+      <button
+        onClick={() => hasDetails && setOpen(!open)}
+        disabled={!hasDetails}
+        className={cn(
+          "w-full px-3 py-2 bg-muted/20 flex flex-wrap gap-2 sm:gap-4 items-center justify-between text-left transition-colors",
+          hasDetails ? "hover:bg-muted/30 cursor-pointer" : "cursor-default"
+        )}
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          {hasDetails ? (
+            open ? <ChevronDown className="w-3 h-3 shrink-0 text-muted-foreground" /> : <ChevronRight className="w-3 h-3 shrink-0 text-muted-foreground" />
+          ) : (
+            <span className="w-3 h-3 shrink-0" />
+          )}
+          <span className="font-bold break-all">{result.altHost}</span>
+        </div>
+        <div className="flex items-center gap-2 sm:gap-4 flex-wrap shrink-0">
+          <span className="text-muted-foreground">{result.durationMs}ms</span>
+          <StatusBadge status={result.status} statusText={result.statusText} />
+        </div>
+      </button>
+
+      {!open && (
+        <div className="px-3 py-2 text-muted-foreground border-t border-border/50">
+          {result.error ? (
+            <span className="text-red-500 break-all">{result.error}</span>
+          ) : (
+            result.body ? "Body returned — click to view" : "No body returned"
+          )}
+        </div>
+      )}
+
+      {open && (
+        <div className="border-t border-border/50 divide-y divide-border/50">
+          {result.error && (
+            <div className="px-3 py-2 text-red-500 break-all">
+              {result.error}
+            </div>
+          )}
+          {result.headers && Object.keys(result.headers).length > 0 && (
+            <div className="px-3 py-2 overflow-x-auto">
+              <div className="text-muted-foreground mb-1 uppercase tracking-wider text-[10px]">Headers</div>
+              <table className="w-full text-left">
+                <tbody>
+                  {Object.entries(result.headers).map(([k, v]) => (
+                    <tr key={k}>
+                      <td className="pr-4 py-0.5 text-muted-foreground whitespace-nowrap">{k}:</td>
+                      <td className="py-0.5 break-all">{(v as string)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {result.body && (
+            <div className="px-3 py-2">
+              <div className="text-muted-foreground mb-1 uppercase tracking-wider text-[10px]">Body (first 2000 chars)</div>
+              <pre className="whitespace-pre-wrap break-all text-[11px] leading-relaxed">
+                {(result.body as string).slice(0, 2000)}
+                {(result.body as string).length > 2000 && <span className="text-muted-foreground">...</span>}
+              </pre>
+            </div>
+          )}
+          {!result.error && !result.body && (!result.headers || Object.keys(result.headers).length === 0) && (
+            <div className="px-3 py-2 text-muted-foreground">No additional details.</div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
