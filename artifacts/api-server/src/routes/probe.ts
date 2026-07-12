@@ -115,6 +115,12 @@ async function runPartial(
         method: method as Parameters<typeof undiciRequest>[1]["method"],
         headers: {
           ...headers,
+          // undici's raw `request()` API (unlike `fetch()`) never decompresses
+          // the response body for us, and since we only read the first 512
+          // bytes and destroy the stream, we can't decode a truncated
+          // gzip/br/deflate stream anyway. Ask the server for an uncompressed
+          // body so the bytes we do read are legible.
+          "Accept-Encoding": "identity",
           ...(body && !["GET", "HEAD"].includes(method.toUpperCase())
             ? { "Content-Type": headers["content-type"] ?? headers["Content-Type"] ?? "application/json" }
             : {}),
