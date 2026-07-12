@@ -368,14 +368,18 @@ async function runExpect100(
 }
 
 // ─── Technique 5: Cross-site probe (raw socket) ──────────────────────────────
-// Alternates rounds between two mirror sites using swapped JWT tokens:
-//   Even rounds → Site A's URL  +  Site B's x-auth token
-//   Odd  rounds → Site B's URL  +  Site A's x-auth token
+// Alternates rounds between two mirror sites using fully swapped identities:
 //
-// Both sites share the same game engine. By cross-authenticating, the server
-// processes the request and returns real game data, but the action is
-// attributed to an account that has no active session on that site — so it
-// has no effect on either player's real game state.
+//   Even rounds → Site A URL  +  Site B token  +  Site B body (Site B's UI)
+//   Odd  rounds → Site B URL  +  Site A token  +  Site A body (Site A's UI)
+//
+// CRITICAL: the body must travel WITH the token, not with the URL.
+// The game server authenticates via both the JWT sub claim AND the UI field
+// in the JSON body — they must agree. Sending Site B's JWT with Site A's
+// body (UI mismatch) is still processed against a real session.
+// By sending Site B's full identity (token + body with B's UI) to Site A's
+// endpoint, the server sees a foreign user with no active session on that
+// site and returns game data without registering a real action on either account.
 //
 // Uses raw TCP/TLS sockets (same primitives as the race technique) instead of
 // undici/fetch so the request bypasses Node's connection pool, avoids any
@@ -422,7 +426,10 @@ async function runCross(opts: {
     const targetUrl  = useA ? urlA  : urlB;
     const method     = useA ? methodA  : methodB;
     const headers    = useA ? crossA   : crossB;
-    const body       = useA ? bodyA    : bodyB;
+    // Body follows the TOKEN, not the URL — JWT sub and body UI must agree.
+    // Even rounds hit Site A's URL but carry Site B's identity (token + body).
+    // Odd rounds hit Site B's URL but carry Site A's identity (token + body).
+    const body       = useA ? bodyB    : bodyA;
     const targetSite = useA ? "A" : "B" as "A" | "B";
     const authSite   = useA ? "B" : "A" as "A" | "B";
 
