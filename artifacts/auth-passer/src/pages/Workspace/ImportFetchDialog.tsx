@@ -53,7 +53,9 @@ export function ImportFetchDialog({ request, setRequest }: { request: AppRequest
       let body = '';
       let contentType = request.contentType;
       let headers: HeaderRow[] = [];
-      let bearerToken = request.bearerToken;
+      // Start with empty strings so a newly imported fetch ALWAYS replaces the saved token.
+      // If the imported fetch has no auth header we clear it rather than silently keeping the old one.
+      let bearerToken = '';
       let authHeaderName = request.authHeaderName;
 
       if (interceptedOptions) {
@@ -93,10 +95,10 @@ export function ImportFetchDialog({ request, setRequest }: { request: AppRequest
               continue; // Handled separately
             }
 
-            // Check for Bearer token
-            if (value.startsWith('Bearer ')) {
+            // Check for Bearer token — case-insensitive so both "Bearer " and "bearer " work
+            if (value.toLowerCase().startsWith('bearer ')) {
               authHeaderName = key;
-              bearerToken = value.slice(7).trim(); // Remove "Bearer "
+              bearerToken = value.slice(7).trim(); // Remove 7-char prefix regardless of case
               continue; 
             }
 
