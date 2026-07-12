@@ -125,6 +125,32 @@ export const DeleteSavedRequestResponse = zod.void()
 
 
 /**
+ * Resolves DNS, port-scans resolved IPs, probes them directly with a spoofed Host header,
+ * and tries alternative Host values — to find a path to the backend that bypasses the front proxy.
+ * @summary Attempt direct connection past a reverse proxy (Angie/nginx)
+ */
+export const bypassProxyBodyMethodDefault = `POST`;
+
+export const BypassProxyBody = zod.object({
+  "url": zod.string(),
+  "method": zod.string().default(bypassProxyBodyMethodDefault),
+  "headers": zod.record(zod.string(), zod.string()).optional(),
+  "bearerToken": zod.string().nullish(),
+  "authHeaderName": zod.string().nullish(),
+  "body": zod.string().nullish(),
+  "techniques": zod.array(zod.enum(['dns', 'portscan', 'directip', 'hostswap'])).default([`dns`, `portscan`, `directip`]),
+  "extraPorts": zod.array(zod.number()).optional()
+})
+
+export const BypassProxyResponse = zod.object({
+  "dns": zod.record(zod.string(), zod.unknown()).optional(),
+  "portscan": zod.record(zod.string(), zod.unknown()).optional(),
+  "directip": zod.record(zod.string(), zod.unknown()).optional(),
+  "hostswap": zod.record(zod.string(), zod.unknown()).optional()
+})
+
+
+/**
  * @summary Probe a URL using timing analysis, partial-abort, or Expect-100-continue
  */
 export const probeRequestBodyMethodDefault = `POST`;

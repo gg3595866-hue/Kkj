@@ -6,6 +6,14 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from './bypassInput';
+export * from './bypassInputHeaders';
+export * from './bypassInputTechniquesItem';
+export * from './bypassOutput';
+export * from './bypassOutputDirectip';
+export * from './bypassOutputDns';
+export * from './bypassOutputHostswap';
+export * from './bypassOutputPortscan';
 export * from './errorResponse';
 export * from './healthStatus';
 export * from './historyEntry';

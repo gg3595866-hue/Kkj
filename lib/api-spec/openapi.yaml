@@ -133,6 +133,34 @@ paths:
         "204":
           description: Deleted
 
+  /proxy/bypass:
+    post:
+      operationId: bypassProxy
+      tags: [proxy]
+      summary: Attempt direct connection past a reverse proxy (Angie/nginx)
+      description: |
+        Resolves DNS, port-scans resolved IPs, probes them directly with a spoofed Host header,
+        and tries alternative Host values — to find a path to the backend that bypasses the front proxy.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BypassInput"
+      responses:
+        "200":
+          description: Bypass probe results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BypassOutput"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /proxy/probe:
     post:
       operationId: probeRequest
@@ -217,6 +245,53 @@ components:
           type: string
       required:
         - status
+
+    BypassInput:
+      type: object
+      required:
+        - url
+      properties:
+        url:
+          type: string
+        method:
+          type: string
+          default: POST
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        bearerToken:
+          type: ["string", "null"]
+        authHeaderName:
+          type: ["string", "null"]
+        body:
+          type: ["string", "null"]
+        techniques:
+          type: array
+          items:
+            type: string
+            enum: [dns, portscan, directip, hostswap]
+          default: [dns, portscan, directip]
+        extraPorts:
+          type: array
+          items:
+            type: integer
+
+    BypassOutput:
+      type: object
+      properties:
+        dns:
+          type: object
+          additionalProperties: true
+        portscan:
+          type: object
+          additionalProperties: true
+        directip:
+          type: object
+          additionalProperties: true
+        hostswap:
+          type: object
+          additionalProperties: true
 
     ProbeInput:
       type: object

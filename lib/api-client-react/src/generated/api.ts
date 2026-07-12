@@ -20,6 +20,8 @@ import type {
 } from '@tanstack/react-query';
 
 import type {
+  BypassInput,
+  BypassOutput,
   ErrorResponse,
   HealthStatus,
   HistoryEntry,
@@ -500,6 +502,79 @@ export const useDeleteSavedRequest = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getDeleteSavedRequestMutationOptions(options));
+    }
+
+export const getBypassProxyUrl = () => {
+
+
+
+
+  return `/api/proxy/bypass`
+}
+
+/**
+ * Resolves DNS, port-scans resolved IPs, probes them directly with a spoofed Host header,
+ * and tries alternative Host values — to find a path to the backend that bypasses the front proxy.
+ * @summary Attempt direct connection past a reverse proxy (Angie/nginx)
+ */
+export const bypassProxy = async (bypassInput: BypassInput, options?: RequestInit): Promise<BypassOutput> => {
+
+  return customFetch<BypassOutput>(getBypassProxyUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(bypassInput)
+  }
+);}
+
+
+
+
+
+export const getBypassProxyMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof bypassProxy>>, TError,{data: BodyType<BypassInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof bypassProxy>>, TError,{data: BodyType<BypassInput>}, TContext> => {
+
+const mutationKey = ['bypassProxy'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof bypassProxy>>, {data: BodyType<BypassInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  bypassProxy(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type BypassProxyMutationResult = NonNullable<Awaited<ReturnType<typeof bypassProxy>>>
+    export type BypassProxyMutationBody = BodyType<BypassInput>
+    export type BypassProxyMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Attempt direct connection past a reverse proxy (Angie/nginx)
+ */
+export const useBypassProxy = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof bypassProxy>>, TError,{data: BodyType<BypassInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof bypassProxy>>,
+        TError,
+        {data: BodyType<BypassInput>},
+        TContext
+      > => {
+      return useMutation(getBypassProxyMutationOptions(options));
     }
 
 export const getProbeRequestUrl = () => {

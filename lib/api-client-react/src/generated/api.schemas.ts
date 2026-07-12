@@ -9,6 +9,47 @@ export interface HealthStatus {
   status: string;
 }
 
+export type BypassInputHeaders = {[key: string]: string};
+
+export type BypassInputTechniquesItem = typeof BypassInputTechniquesItem[keyof typeof BypassInputTechniquesItem];
+
+
+export const BypassInputTechniquesItem = {
+  dns: 'dns',
+  portscan: 'portscan',
+  directip: 'directip',
+  hostswap: 'hostswap',
+} as const;
+
+export interface BypassInput {
+  url: string;
+  method?: string;
+  headers?: BypassInputHeaders;
+  /** @nullable */
+  bearerToken?: string | null;
+  /** @nullable */
+  authHeaderName?: string | null;
+  /** @nullable */
+  body?: string | null;
+  techniques?: BypassInputTechniquesItem[];
+  extraPorts?: number[];
+}
+
+export type BypassOutputDns = { [key: string]: unknown };
+
+export type BypassOutputPortscan = { [key: string]: unknown };
+
+export type BypassOutputDirectip = { [key: string]: unknown };
+
+export type BypassOutputHostswap = { [key: string]: unknown };
+
+export interface BypassOutput {
+  dns?: BypassOutputDns;
+  portscan?: BypassOutputPortscan;
+  directip?: BypassOutputDirectip;
+  hostswap?: BypassOutputHostswap;
+}
+
 export type ProbeInputHeaders = {[key: string]: string};
 
 export type ProbeInputTechniquesItem = typeof ProbeInputTechniquesItem[keyof typeof ProbeInputTechniquesItem];

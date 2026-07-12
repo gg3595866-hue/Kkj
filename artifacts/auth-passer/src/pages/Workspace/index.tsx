@@ -5,6 +5,8 @@ import { RequestBuilder } from './RequestBuilder';
 import { ResponsePanel } from './ResponsePanel';
 import { ProbeTab } from './ProbeTab';
 import { ProbeResults } from './ProbeResults';
+import { BypassTab } from './BypassTab';
+import { BypassResults } from './BypassResults';
 import { AppRequestState } from './types';
 import { ProxyResponse } from '@workspace/api-client-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/core';
@@ -55,6 +57,7 @@ export default function Workspace() {
               <TabsList className="bg-background">
                 <TabsTrigger value="builder">Builder</TabsTrigger>
                 <TabsTrigger value="probe">Probe</TabsTrigger>
+                <TabsTrigger value="bypass">Bypass</TabsTrigger>
               </TabsList>
             </div>
             <TabsContent value="builder" className="flex-1 overflow-hidden m-0 data-[state=active]:flex flex-col">
@@ -62,6 +65,9 @@ export default function Workspace() {
             </TabsContent>
             <TabsContent value="probe" className="flex-1 overflow-hidden m-0 data-[state=active]:flex flex-col">
               <ProbeTab request={request} setRequest={setRequest} setResponse={setResponse} />
+            </TabsContent>
+            <TabsContent value="bypass" className="flex-1 overflow-hidden m-0 data-[state=active]:flex flex-col">
+              <BypassTab request={request} setRequest={setRequest} setResponse={setResponse} />
             </TabsContent>
           </Tabs>
         </Panel>
@@ -71,6 +77,8 @@ export default function Workspace() {
         <Panel defaultSize={40} minSize={20}>
           {response && (response as any)._isProbe ? (
             <ProbeResults response={response} />
+          ) : response && (response as any)._isBypass ? (
+            <BypassResults response={response} />
           ) : (
             <ResponsePanel response={response} />
           )}
