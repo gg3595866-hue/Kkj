@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { fetch as undiciFetch, Agent } from "undici";
+import { describeFetchError } from "../lib/fetch-error";
 
 const scanRouter = Router();
 
@@ -113,14 +114,16 @@ scanRouter.post("/proxy/scan", async (req, res) => {
         if (hasData && method === "GET" && !postBody) break;
       } catch (err: unknown) {
         const durationMs = Date.now() - startTime;
-        let errorMessage = "Unknown error";
-        if (err instanceof Error) {
-          if (err.name === "TimeoutError" || err.name === "AbortError") {
-            errorMessage = "Timed out (10s)";
-          } else {
-            errorMessage = err.message;
-          }
+        let hostname: string | undefined;
+        try {
+          hostname = new URL(url).hostname;
+        } catch {
+          // url already validated by caller loop; ignore if unparsable here
         }
+        const errorMessage =
+          err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")
+            ? "Timed out (10s)"
+            : describeFetchError(err, hostname);
         results.push({
           path,
           method,

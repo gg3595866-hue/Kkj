@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { savedRequestsTable, requestHistoryTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import { fetch as undiciFetch, Agent } from "undici";
+import { describeFetchError } from "../lib/fetch-error";
 
 const proxyRouter = Router();
 
@@ -124,23 +125,7 @@ proxyRouter.post("/proxy/send", async (req, res) => {
   } catch (err: unknown) {
     const durationMs = Date.now() - startTime;
 
-    let errorMessage = "Unknown error";
-    if (err instanceof Error) {
-      if (err.name === "TimeoutError" || err.name === "AbortError") {
-        errorMessage = `Request timed out after 30 seconds (${url})`;
-      } else if (
-        err.message.includes("ENOTFOUND") ||
-        err.message.includes("getaddrinfo")
-      ) {
-        errorMessage = `DNS lookup failed — host not found: ${parsedUrl.hostname}`;
-      } else if (err.message.includes("ECONNREFUSED")) {
-        errorMessage = `Connection refused by ${parsedUrl.hostname}:${parsedUrl.port || (parsedUrl.protocol === "https:" ? "443" : "80")}`;
-      } else if (err.message.includes("ECONNRESET")) {
-        errorMessage = `Connection reset by server at ${parsedUrl.hostname}`;
-      } else {
-        errorMessage = err.message;
-      }
-    }
+    const errorMessage = describeFetchError(err, parsedUrl.hostname);
 
     const [historyEntry] = await db
       .insert(requestHistoryTable)
