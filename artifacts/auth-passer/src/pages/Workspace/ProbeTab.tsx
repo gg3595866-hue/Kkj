@@ -62,18 +62,20 @@ export function ProbeTab({ request, setRequest, setResponse }: { request: AppReq
   const probeRequest = useProbeRequest();
   
   const [techniques, setTechniques] = useState({
-    timing: true,
-    partial: true,
+    timing: false,
+    partial: false,
     expect100: false,
     race: false,
     cross: false,
     methodprobe: false,
     validationprobe: false,
+    replay: false,
   });
   
   const [timingRounds, setTimingRounds] = useState(5);
   const [raceConnections, setRaceConnections] = useState(10);
   const [crossRounds, setCrossRounds] = useState(6);
+  const [replayRounds, setReplayRounds] = useState(4);
 
   // Validation probe state
   const DEFAULT_PATCHES = [
@@ -94,7 +96,7 @@ export function ProbeTab({ request, setRequest, setResponse }: { request: AppReq
   const handleRun = () => {
     const selectedTechniques = Object.entries(techniques)
       .filter(([_, v]) => v)
-      .map(([k]) => k as "timing" | "partial" | "expect100" | "race" | "cross" | "methodprobe" | "validationprobe");
+      .map(([k]) => k as "timing" | "partial" | "expect100" | "race" | "cross" | "methodprobe" | "validationprobe" | "replay");
       
     if (selectedTechniques.length === 0) return;
 
@@ -123,6 +125,8 @@ export function ProbeTab({ request, setRequest, setResponse }: { request: AppReq
           siteBAuthHeaderName: siteBAuthHeader || undefined,
           siteBBody: siteBBody || undefined,
         } : {}),
+        // Replay probe fields
+        ...(techniques.replay ? { replayRounds } : {}),
         // Validation probe fields
         ...(techniques.validationprobe ? {
           validationPatches: validationPatches
@@ -221,6 +225,25 @@ export function ProbeTab({ request, setRequest, setResponse }: { request: AppReq
                     <Input type="number" min={2} max={50} value={raceConnections}
                       onChange={e => setRaceConnections(parseInt(e.target.value) || 2)}
                       className="w-20 h-7 text-xs" />
+                  </div>
+                )}
+              </div>
+            </label>
+
+            {/* Replay Probe */}
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input type="checkbox" className="mt-1 accent-primary" checked={techniques.replay}
+                onChange={e => setTechniques(prev => ({...prev, replay: e.target.checked}))} />
+              <div>
+                <div className="text-sm font-medium">Replay Probe <span className="text-xs font-normal text-yellow-400 ml-1">⚠ round 1 commits, rounds 2+ are safe</span></div>
+                <div className="text-xs text-muted-foreground">Sends the same request N times. Round 1 registers the action (unavoidable). Rounds 2–N replay with the same AN — the server should reject them (422) without re-committing. Round 1's response body usually contains the full pre-determined game board (RS field) for all future rows.</div>
+                {techniques.replay && (
+                  <div className="mt-2 flex items-center gap-2" onClick={e => e.preventDefault()}>
+                    <span className="text-xs text-muted-foreground">Total sends:</span>
+                    <Input type="number" min={2} max={10} value={replayRounds}
+                      onChange={e => setReplayRounds(parseInt(e.target.value) || 2)}
+                      className="w-20 h-7 text-xs" />
+                    <span className="text-xs text-muted-foreground">1 commit + {replayRounds - 1} replay(s)</span>
                   </div>
                 )}
               </div>

@@ -17,4 +17,5 @@ export const ProbeInputTechniquesItem = {
   cross: 'cross',
   methodprobe: 'methodprobe',
   validationprobe: 'validationprobe',
+  replay: 'replay',
 } as const;

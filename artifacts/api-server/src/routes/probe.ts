@@ -367,6 +367,84 @@ async function runExpect100(
   }
 }
 
+// ─── Technique 5: Replay probe ───────────────────────────────────────────────
+// Sends the identical request N times without changing anything.
+// Round 1 commits the action (this is the sacrificial/inevitable commit).
+// Rounds 2-N are exact replays using the same AN and UC — the server should
+// reject them as "already played" (422 Outdated game state) without
+// re-committing, confirming that replays are safe.
+//
+// This serves two goals:
+//   1. Verify server is NOT idempotent (replays are rejected, not re-committed)
+//   2. Give the user the committed response body (round 1) so they can read the
+//      RS / game board data that the server embeds in the first commit response
+//      — which often pre-encodes all future rows' outcomes.
+async function runReplay(
+  url: string,
+  method: string,
+  headers: Record<string, string>,
+  body: string | null | undefined,
+  rounds: number
+) {
+  const results = [];
+
+  for (let i = 0; i < rounds; i++) {
+    const t0 = Date.now();
+    const isCommit = i === 0;
+    try {
+      const opts: Parameters<typeof undiciFetch>[1] = {
+        method,
+        headers,
+        // @ts-expect-error undici dispatcher
+        dispatcher: insecureAgent,
+        signal: AbortSignal.timeout(15_000),
+        redirect: "follow",
+      };
+      if (body && !["GET", "HEAD"].includes(method.toUpperCase())) {
+        opts.body = body;
+      }
+      const resp = await undiciFetch(url, opts);
+      const durationMs = Date.now() - t0;
+      const respBody = await resp.text();
+      const responseHeaders: Record<string, string> = {};
+      resp.headers.forEach((v, k) => { responseHeaders[k] = v; });
+      const committed = resp.status >= 200 && resp.status < 300;
+      const safeReplay = !isCommit && !committed;
+      results.push({
+        roundIndex: i,
+        isCommit,
+        safeReplay,
+        durationMs,
+        status: resp.status,
+        statusText: resp.statusText || String(resp.status),
+        responseHeaders,
+        body: respBody.length > 8_000 ? respBody.slice(0, 8_000) + "\n…(truncated)" : respBody,
+        error: null,
+        note: isCommit
+          ? `Round 1 — COMMIT (action registered, ${resp.status})`
+          : safeReplay
+          ? `Round ${i + 1} — SAFE REPLAY (server rejected, ${resp.status})`
+          : `Round ${i + 1} — ⚠ REPLAY also committed (${resp.status}) — server may be idempotent`,
+      });
+    } catch (err: unknown) {
+      results.push({
+        roundIndex: i,
+        isCommit,
+        safeReplay: false,
+        durationMs: Date.now() - t0,
+        status: 0,
+        statusText: "Error",
+        responseHeaders: {},
+        body: null,
+        error: err instanceof Error ? err.message : String(err),
+        note: `Round ${i + 1} — network error`,
+      });
+    }
+  }
+
+  return results;
+}
+
 // ─── Technique 5: Method capability probe ────────────────────────────────────
 // Sends OPTIONS, HEAD, and GET to the same URL with the same auth headers.
 // None of these methods carry a body and none should trigger a game action.
@@ -679,6 +757,11 @@ probeRouter.post("/proxy/probe", async (req, res) => {
         case "race":
           output.race = await runRace({ url, method, headers, body, connections: raceConnections });
           break;
+        case "replay": {
+          const replayRounds = Math.min(Math.max(parseInt(req.body.replayRounds) || 4, 2), 20);
+          output.replay = await runReplay(url, method, headers, body, replayRounds);
+          break;
+        }
         case "methodprobe":
           output.methodprobe = await runMethodProbe(url, headers);
           break;

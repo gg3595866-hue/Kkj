@@ -39,6 +39,7 @@ export * from './proxyResponseHeaders';
 export * from './raceAttempt';
 export * from './raceAttemptResponseHeaders';
 export * from './raceResult';
+export * from './replayRound';
 export * from './savedRequest';
 export * from './savedRequestHeaders';
 export * from './savedRequestInput';

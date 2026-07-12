@@ -26,10 +26,11 @@ export function ProbeResults({ response }: { response: any }) {
             {response.expect100 && <Expect100Result round={response.expect100} />}
             {response.race && <RaceResultView race={response.race} />}
             {response.cross && <CrossResult rounds={response.cross} />}
+            {response.replay && <ReplayResult rounds={response.replay} />}
             {response.methodprobe && <MethodProbeResult rounds={response.methodprobe} />}
             {response.validationprobe && <ValidationProbeResult rounds={response.validationprobe} />}
             
-            {!response.timing && !response.partial && !response.expect100 && !response.race && !response.cross && !response.methodprobe && !response.validationprobe && (
+            {!response.timing && !response.partial && !response.expect100 && !response.race && !response.cross && !response.methodprobe && !response.validationprobe && !response.replay && (
               <div className="text-muted-foreground text-sm font-mono text-center mt-10">
                 No probe techniques were executed.
               </div>
@@ -279,6 +280,94 @@ function RaceResultView({ race }: { race: any }) {
             </tbody>
           </table>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function ReplayResult({ rounds }: { rounds: any[] }) {
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+  const commit = rounds[0];
+  const replays = rounds.slice(1);
+  const allReplaysRejected = replays.length > 0 && replays.every(r => r.status >= 400 || r.status === 0);
+  const anyReplayCommitted = replays.some(r => r.safeReplay === false && r.status >= 200 && r.status < 300);
+
+  return (
+    <div className="space-y-3">
+      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Replay Probe</h3>
+
+      {allReplaysRejected && (
+        <div className="text-xs text-green-400 bg-green-400/10 border border-green-400/30 p-2 rounded">
+          ✓ Server rejected all replays — replaying a committed AN is safe (no double-commit)
+        </div>
+      )}
+      {anyReplayCommitted && (
+        <div className="text-xs text-red-400 bg-red-400/10 border border-red-400/30 p-2 rounded">
+          ⚠ One or more replays returned 2xx — server may be idempotent or committed a second action
+        </div>
+      )}
+
+      <div className="text-xs text-muted-foreground bg-muted/10 p-2 rounded border border-border/30">
+        Round 1 body often contains a pre-determined game board in the <span className="text-primary font-mono">RS</span> field — check it for all future row outcomes before playing them.
+      </div>
+
+      <div className="border border-border/50 rounded-md overflow-hidden">
+        <table className="w-full text-left text-sm font-mono">
+          <thead className="bg-muted/30 text-xs">
+            <tr>
+              <th className="px-3 py-2 border-b w-16 text-muted-foreground">Round</th>
+              <th className="px-3 py-2 border-b w-24 text-muted-foreground">Type</th>
+              <th className="px-3 py-2 border-b w-24 text-muted-foreground">Duration</th>
+              <th className="px-3 py-2 border-b w-20 text-muted-foreground">Status</th>
+              <th className="px-3 py-2 border-b text-muted-foreground">Body</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/30">
+            {rounds.map((r, i) => {
+              const bodyStr = typeof r.body === 'string' ? r.body : r.body ? JSON.stringify(r.body) : '';
+              const hasMore = bodyStr && bodyStr.length > 120;
+              const expanded = expandedIdx === i;
+              return (
+                <tr key={i} className={`hover:bg-muted/10 transition-colors align-top ${r.isCommit ? 'bg-yellow-400/5' : r.safeReplay ? 'bg-green-400/5' : ''}`}>
+                  <td className="px-3 py-2 text-muted-foreground">{i + 1}</td>
+                  <td className="px-3 py-2">
+                    {r.isCommit
+                      ? <span className="text-yellow-400 text-[11px] font-bold">COMMIT</span>
+                      : r.safeReplay
+                      ? <span className="text-green-400 text-[11px] font-bold">SAFE REPLAY</span>
+                      : <span className="text-red-400 text-[11px] font-bold">⚠ RE-COMMITTED</span>
+                    }
+                  </td>
+                  <td className="px-3 py-2">{r.durationMs}ms</td>
+                  <td className="px-3 py-2">
+                    <Badge variant={getStatusVariant(r.status)}>{r.status || 'err'}</Badge>
+                  </td>
+                  <td className="px-3 py-2">
+                    {r.error ? (
+                      <span className="text-destructive text-[11px] break-all">{r.error}</span>
+                    ) : bodyStr ? (
+                      <div
+                        className={`flex gap-2 ${hasMore ? 'cursor-pointer' : ''}`}
+                        onClick={() => hasMore && setExpandedIdx(expanded ? null : i)}
+                      >
+                        <span className="text-muted-foreground whitespace-pre-wrap flex-1 break-all text-[11px] leading-tight">
+                          {expanded ? bodyStr : bodyStr.substring(0, 120) + (hasMore && !expanded ? '...' : '')}
+                        </span>
+                        {hasMore && (
+                          <span className="text-muted-foreground shrink-0 mt-0.5">
+                            {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground/50 text-[11px] italic">Empty body</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );

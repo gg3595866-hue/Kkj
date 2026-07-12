@@ -89,7 +89,13 @@ scanRouter.post("/proxy/scan", async (req, res) => {
       authHeaderName && authHeaderName.trim()
         ? authHeaderName.trim()
         : "Authorization";
-    requestHeaders[headerName] = `Bearer ${bearerToken}`;
+    // For the standard Authorization header, prepend "Bearer ".
+    // For custom auth headers (x-auth, X-Token, etc.) the raw token is used
+    // as-is — these APIs typically don't expect the "Bearer " prefix.
+    const isStandardAuth = headerName.toLowerCase() === "authorization";
+    requestHeaders[headerName] = isStandardAuth
+      ? `Bearer ${bearerToken}`
+      : bearerToken;
   }
 
   // Probe each path with GET, and optionally POST if GET gives nothing useful.

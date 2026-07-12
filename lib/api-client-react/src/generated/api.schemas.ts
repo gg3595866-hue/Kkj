@@ -63,6 +63,7 @@ export const ProbeInputTechniquesItem = {
   cross: 'cross',
   methodprobe: 'methodprobe',
   validationprobe: 'validationprobe',
+  replay: 'replay',
 } as const;
 
 /**
@@ -88,6 +89,7 @@ export interface ProbeInput {
      * cross — alternate timing rounds between Site A (primary URL/token) and Site B (mirror site with separate account), so each site only sees half the probe volume and the server does not flag repeated identical requests from one session.
      * methodprobe — send OPTIONS, HEAD, and GET to the same URL with the same auth and record what the server allows; these are non-mutating HTTP methods that reveal server capability without registering any game action.
      * validationprobe — send the request body N times with a different field patched each time (e.g. AN=-1, GT=0); requests that fail pre-commit validation reveal server behaviour without registering an action.
+     * replay — send the same request N times without changing anything; round 1 commits the action (expected), rounds 2-N are replays that the server should reject (422) without re-committing — confirms the server is not idempotent and replays are safe.
      */
   techniques: ProbeInputTechniquesItem[];
   /** Number of requests to send for the timing technique */
@@ -125,6 +127,8 @@ export interface ProbeInput {
   siteBBody?: string | null;
   /** Validation probe: JSON strings, each merged over the base body for one sub-request (e.g. '{"AN":-1}' patches the action number) */
   validationPatches?: string[];
+  /** Replay probe: total number of sends (first commits, rest are replays) */
+  replayRounds?: number;
 }
 
 export type ProbeRoundResponseHeaders = {[key: string]: string};
@@ -225,6 +229,15 @@ export type ValidationProbeRound = ProbeRound & {
   committed?: boolean;
 };
 
+export type ReplayRound = ProbeRound & {
+  /** 0-based index of this send */
+  roundIndex: number;
+  /** True for the first send (the one that commits the action), false for replays */
+  isCommit: boolean;
+  /** True when this is a replay that returned non-2xx (server rejected it without re-committing) */
+  safeReplay?: boolean;
+};
+
 export interface ProbeOutput {
   timing?: ProbeRound[];
   partial?: ProbeRound;
@@ -233,6 +246,7 @@ export interface ProbeOutput {
   cross?: CrossRound[];
   methodprobe?: MethodProbeRound[];
   validationprobe?: ValidationProbeRound[];
+  replay?: ReplayRound[];
 }
 
 export type ScanInputHeaders = {[key: string]: string};

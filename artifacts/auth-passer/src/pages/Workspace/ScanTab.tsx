@@ -3,7 +3,7 @@ import { AppRequestState } from './types';
 import { Button, Input, Textarea } from '@/components/ui/core';
 import { useScanEndpoints } from '@workspace/api-client-react';
 import { Play, ListPlus } from 'lucide-react';
-import { ADMIN_PATH_WORDLIST } from './adminWordlist';
+import { ADMIN_PATH_WORDLIST, GAME_API_WORDLIST } from './adminWordlist';
 
 // Endpoint / admin-surface discovery. If the normal client-facing endpoint
 // doesn't cooperate (blocked, rate-limited, wrong shape), this scans a base
@@ -34,6 +34,10 @@ export function ScanTab({ request, setRequest, setResponse, onRouteThrough }: {
 
   const handleLoadAdminWordlist = () => {
     setPathsStr(ADMIN_PATH_WORDLIST.join('\n'));
+  };
+
+  const handleLoadGameWordlist = () => {
+    setPathsStr(GAME_API_WORDLIST.join('\n'));
   };
 
   const handleRun = () => {
@@ -93,13 +97,22 @@ export function ScanTab({ request, setRequest, setResponse, onRouteThrough }: {
         <section className="space-y-2 flex-1 flex flex-col min-h-[220px]">
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Candidate Paths (one per line)</h3>
-            <button
-              onClick={handleLoadAdminWordlist}
-              className="flex items-center gap-1 text-xs text-primary hover:underline"
-              title="Reset to the default admin-path wordlist"
-            >
-              <ListPlus className="w-3 h-3" /> Load admin wordlist
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleLoadAdminWordlist}
+                className="flex items-center gap-1 text-xs text-primary hover:underline"
+                title="Reset to the default admin-path wordlist"
+              >
+                <ListPlus className="w-3 h-3" /> Admin wordlist
+              </button>
+              <button
+                onClick={handleLoadGameWordlist}
+                className="flex items-center gap-1 text-xs text-green-400 hover:underline"
+                title="Load game-engine state query paths (GetState, GetGame, GetInfo, …)"
+              >
+                <ListPlus className="w-3 h-3" /> Game API wordlist
+              </button>
+            </div>
           </div>
           <Textarea
             className="flex-1 font-mono text-xs resize-none min-h-[220px]"
