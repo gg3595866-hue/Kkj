@@ -25,8 +25,9 @@ export function ProbeResults({ response }: { response: any }) {
             {response.partial && <PartialResult round={response.partial} />}
             {response.expect100 && <Expect100Result round={response.expect100} />}
             {response.race && <RaceResultView race={response.race} />}
+            {response.cross && <CrossResult rounds={response.cross} />}
             
-            {!response.timing && !response.partial && !response.expect100 && !response.race && (
+            {!response.timing && !response.partial && !response.expect100 && !response.race && !response.cross && (
               <div className="text-muted-foreground text-sm font-mono text-center mt-10">
                 No probe techniques were executed.
               </div>
@@ -276,6 +277,93 @@ function RaceResultView({ race }: { race: any }) {
             </tbody>
           </table>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function CrossResult({ rounds }: { rounds: any[] | { error: string } }) {
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+
+  if (!Array.isArray(rounds)) {
+    return (
+      <div className="space-y-3">
+        <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Cross-Site Probe</h3>
+        <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 p-3 rounded font-mono">
+          {(rounds as any).error}
+        </div>
+      </div>
+    );
+  }
+
+  const siteARows = rounds.filter(r => r.site === 'A');
+  const siteBRows = rounds.filter(r => r.site === 'B');
+  const aOk = siteARows.filter(r => r.status >= 200 && r.status < 300).length;
+  const bOk = siteBRows.filter(r => r.status >= 200 && r.status < 300).length;
+
+  return (
+    <div className="space-y-3">
+      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Cross-Site Probe</h3>
+      <div className="flex items-center gap-4 text-xs font-mono bg-muted/20 p-3 rounded-md border border-border/50 flex-wrap">
+        <div>Rounds: <span className="text-foreground">{rounds.length}</span></div>
+        <div className="text-blue-400">Site A URL (B token+body): <span className="text-foreground">{siteARows.length} rounds, {aOk} ✓</span></div>
+        <div className="text-purple-400">Site B URL (A token+body): <span className="text-foreground">{siteBRows.length} rounds, {bOk} ✓</span></div>
+      </div>
+
+      <div className="border border-border/50 rounded-md overflow-hidden">
+        <table className="w-full text-left text-sm font-mono">
+          <thead className="bg-muted/30 text-xs">
+            <tr>
+              <th className="px-3 py-2 border-b w-16 text-muted-foreground">Round</th>
+              <th className="px-3 py-2 border-b w-20 text-muted-foreground">Site</th>
+              <th className="px-3 py-2 border-b w-24 text-muted-foreground">Duration</th>
+              <th className="px-3 py-2 border-b w-20 text-muted-foreground">Status</th>
+              <th className="px-3 py-2 border-b text-muted-foreground">Body / Error</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/30">
+            {rounds.map((r, i) => {
+              const bodyStr = typeof r.body === 'string' ? r.body : r.body ? JSON.stringify(r.body) : '';
+              const hasMore = bodyStr && bodyStr.length > 120;
+              const expanded = expandedIdx === i;
+              const siteColor = r.site === 'A' ? 'text-blue-400' : 'text-purple-400';
+              return (
+                <tr key={i} className="hover:bg-muted/10 transition-colors align-top">
+                  <td className="px-3 py-2 text-muted-foreground">{i + 1}</td>
+                  <td className={`px-3 py-2 font-bold ${siteColor}`}>
+                    <div>{r.site === 'A' ? 'A→B' : 'B→A'}</div>
+                    <div className="text-[9px] font-normal text-muted-foreground normal-case">url:{r.site} auth:{r.authSite}</div>
+                  </td>
+                  <td className="px-3 py-2">{r.durationMs}ms</td>
+                  <td className="px-3 py-2">
+                    <Badge variant={getStatusVariant(r.status)}>{r.status || 'err'}</Badge>
+                  </td>
+                  <td className="px-3 py-2">
+                    {r.error ? (
+                      <span className="text-destructive text-[11px] break-all">{r.error}</span>
+                    ) : bodyStr ? (
+                      <div
+                        className={`flex gap-2 ${hasMore ? 'cursor-pointer' : ''}`}
+                        onClick={() => hasMore && setExpandedIdx(expanded ? null : i)}
+                      >
+                        <span className="text-muted-foreground whitespace-pre-wrap flex-1 break-all text-[11px] leading-tight">
+                          {expanded ? bodyStr : bodyStr.substring(0, 120) + (hasMore && !expanded ? '...' : '')}
+                        </span>
+                        {hasMore && (
+                          <span className="text-muted-foreground shrink-0 mt-0.5">
+                            {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground/50 text-[11px] italic">Empty body</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );
