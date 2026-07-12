@@ -70,45 +70,62 @@ function buildRawHttp1Request(
   return hasBody ? Buffer.concat([headBuf, Buffer.from(body!, "utf8")]) : headBuf;
 }
 
+// Node throws (and crashes the whole process) if a socket emits 'error' with
+// zero listeners attached at that moment. Raw sockets racing against a
+// real network target WILL sometimes error asynchronously — after we've
+// already settled their connect promise, mid-write, or while another
+// socket in the batch is still being read — so every socket in this module
+// gets one baseline listener attached for its *entire* lifetime, in
+// addition to whatever short-lived `once` listeners individual phases add.
+// This baseline listener never throws; it just guarantees Node always sees
+// at least one 'error' listener so the event can never become "unhandled".
+function armBaselineErrorHandler(sock: net.Socket | tls.TLSSocket): void {
+  sock.on("error", () => {
+    // Intentionally a no-op safety net. Real handling/reporting happens in
+    // the phase-specific `once("error", ...)` listeners below, which race
+    // against this one and run in the same tick.
+  });
+}
+
 function connectSocket(urlObj: URL, timeoutMs: number): Promise<net.Socket | tls.TLSSocket> {
   return new Promise((resolve, reject) => {
     const isTls = urlObj.protocol === "https:";
     const port = urlObj.port ? Number(urlObj.port) : isTls ? 443 : 80;
 
+    let settled = false;
+    let sock: net.Socket | tls.TLSSocket;
+
     const onError = (err: Error) => {
-      cleanup();
+      if (settled) return;
+      settled = true;
+      sock.destroy();
       reject(err);
     };
     const onTimeout = () => {
-      cleanup();
+      if (settled) return;
+      settled = true;
+      sock.destroy();
       reject(new Error("Connection timed out"));
     };
-    let sock: net.Socket | tls.TLSSocket;
-    const cleanup = () => {
-      sock.removeListener("error", onError);
-      sock.removeListener("timeout", onTimeout);
+    const onConnect = () => {
+      if (settled) return;
+      settled = true;
+      resolve(sock);
     };
 
     if (isTls) {
-      sock = tls.connect(
-        {
-          host: urlObj.hostname,
-          port,
-          servername: urlObj.hostname,
-          rejectUnauthorized: false, // matches the insecure-agent pattern used elsewhere in this tool
-          timeout: timeoutMs,
-        },
-        () => {
-          cleanup();
-          resolve(sock);
-        }
-      );
-    } else {
-      sock = net.connect({ host: urlObj.hostname, port, timeout: timeoutMs }, () => {
-        cleanup();
-        resolve(sock);
+      sock = tls.connect({
+        host: urlObj.hostname,
+        port,
+        servername: urlObj.hostname,
+        rejectUnauthorized: false, // matches the insecure-agent pattern used elsewhere in this tool
+        timeout: timeoutMs,
       });
+    } else {
+      sock = net.connect({ host: urlObj.hostname, port, timeout: timeoutMs });
     }
+    armBaselineErrorHandler(sock);
+    sock.once(isTls ? "secureConnect" : "connect", onConnect);
     sock.once("error", onError);
     sock.once("timeout", onTimeout);
   });
