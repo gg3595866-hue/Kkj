@@ -156,6 +156,7 @@ export const BypassProxyResponse = zod.object({
 export const probeRequestBodyMethodDefault = `POST`;
 export const probeRequestBodyTimingRoundsDefault = 5;
 export const probeRequestBodyRaceConnectionsDefault = 10;
+export const probeRequestBodyCrossRoundsDefault = 6;
 
 export const ProbeRequestBody = zod.object({
   "url": zod.string(),
@@ -164,9 +165,16 @@ export const ProbeRequestBody = zod.object({
   "bearerToken": zod.string().nullish(),
   "authHeaderName": zod.string().nullish(),
   "body": zod.string().nullish(),
-  "techniques": zod.array(zod.enum(['timing', 'partial', 'expect100', 'race'])).describe('timing — send N identical requests and record response time + body for each (reveals variance in server state).\npartial — send full request, read response status+headers then immediately abort before reading body (avoids fully consuming the response stream).\nexpect100 — send headers with Expect:100-continue and withhold the body; captures whatever the server replies before it receives payload.\nrace — open N raw connections, hold every request just short of complete, then release the final bytes on all connections in the same tick (single-packet \/ last-byte-sync attack) so they land inside the server\'s check-then-act window instead of being serialized.\n'),
+  "techniques": zod.array(zod.enum(['timing', 'partial', 'expect100', 'race', 'cross'])).describe('timing — send N identical requests and record response time + body for each (reveals variance in server state).\npartial — send full request, read response status+headers then immediately abort before reading body (avoids fully consuming the response stream).\nexpect100 — send headers with Expect:100-continue and withhold the body; captures whatever the server replies before it receives payload.\nrace — open N raw connections, hold every request just short of complete, then release the final bytes on all connections in the same tick (single-packet \/ last-byte-sync attack) so they land inside the server\'s check-then-act window instead of being serialized.\ncross — alternate timing rounds between Site A (primary URL\/token) and Site B (mirror site with separate account), so each site only sees half the probe volume and the server does not flag repeated identical requests from one session.\n'),
   "timingRounds": zod.number().default(probeRequestBodyTimingRoundsDefault).describe('Number of requests to send for the timing technique'),
-  "raceConnections": zod.number().default(probeRequestBodyRaceConnectionsDefault).describe('Number of simultaneous connections to open for the race technique')
+  "raceConnections": zod.number().default(probeRequestBodyRaceConnectionsDefault).describe('Number of simultaneous connections to open for the race technique'),
+  "crossRounds": zod.number().default(probeRequestBodyCrossRoundsDefault).describe('Total rounds for the cross technique (split evenly: even rounds → Site A, odd rounds → Site B)'),
+  "siteBUrl": zod.string().nullish().describe('Cross probe: URL for Site B (the mirror site with a separate account)'),
+  "siteBMethod": zod.string().nullish().describe('Cross probe: HTTP method for Site B (defaults to the same method as Site A)'),
+  "siteBHeaders": zod.record(zod.string(), zod.string()).optional().describe('Cross probe: custom headers for Site B (e.g. sec-ch-ua, referrer overrides)'),
+  "siteBBearerToken": zod.string().nullish().describe('Cross probe: bearer token for Site B account'),
+  "siteBAuthHeaderName": zod.string().nullish().describe('Cross probe: auth header name for Site B (default x-auth or Authorization)'),
+  "siteBBody": zod.string().nullish().describe('Cross probe: request body for Site B (usually same structure as Site A but with Site B user ID)')
 })
 
 export const ProbeRequestResponse = zod.object({
@@ -214,7 +222,20 @@ export const ProbeRequestResponse = zod.object({
   "suffixSentAt": zod.number().optional().describe('Timestamp (ms, relative to batch start) when this connection\'s final bytes were written'),
   "firstByteAtMs": zod.number().nullish().describe('Time (ms, relative to suffix release) until the first response byte arrived on this connection')
 }))
-}).optional()
+}).optional(),
+  "cross": zod.array(zod.object({
+  "durationMs": zod.number(),
+  "status": zod.number(),
+  "statusText": zod.string().optional(),
+  "responseHeaders": zod.record(zod.string(), zod.string()).optional(),
+  "body": zod.string().nullish(),
+  "error": zod.string().nullish(),
+  "note": zod.string().optional().describe('Human-readable description of what happened')
+}).and(zod.object({
+  "site": zod.enum(['A', 'B']).describe('Which site\'s URL was targeted this round'),
+  "targetUrl": zod.string().describe('The URL that was actually called'),
+  "authSite": zod.enum(['A', 'B']).describe('Which site\'s JWT token was used (opposite of targetUrl\'s site)')
+}))).optional()
 })
 
 

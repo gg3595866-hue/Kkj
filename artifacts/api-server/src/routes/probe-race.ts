@@ -40,7 +40,7 @@ interface RaceOptions {
   connections: number;
 }
 
-function buildRawHttp1Request(
+export function buildRawHttp1Request(
   urlObj: URL,
   method: string,
   headers: Record<string, string>,
@@ -79,7 +79,7 @@ function buildRawHttp1Request(
 // addition to whatever short-lived `once` listeners individual phases add.
 // This baseline listener never throws; it just guarantees Node always sees
 // at least one 'error' listener so the event can never become "unhandled".
-function armBaselineErrorHandler(sock: net.Socket | tls.TLSSocket): void {
+export function armBaselineErrorHandler(sock: net.Socket | tls.TLSSocket): void {
   sock.on("error", () => {
     // Intentionally a no-op safety net. Real handling/reporting happens in
     // the phase-specific `once("error", ...)` listeners below, which race
@@ -87,7 +87,7 @@ function armBaselineErrorHandler(sock: net.Socket | tls.TLSSocket): void {
   });
 }
 
-function connectSocket(urlObj: URL, timeoutMs: number): Promise<net.Socket | tls.TLSSocket> {
+export function connectSocket(urlObj: URL, timeoutMs: number): Promise<net.Socket | tls.TLSSocket> {
   return new Promise((resolve, reject) => {
     const isTls = urlObj.protocol === "https:";
     const port = urlObj.port ? Number(urlObj.port) : isTls ? 443 : 80;
@@ -131,7 +131,7 @@ function connectSocket(urlObj: URL, timeoutMs: number): Promise<net.Socket | tls
   });
 }
 
-function writeAndDrain(sock: net.Socket, chunk: Buffer): Promise<void> {
+export function writeAndDrain(sock: net.Socket, chunk: Buffer): Promise<void> {
   return new Promise((resolve, reject) => {
     const onError = (err: Error) => reject(err);
     sock.once("error", onError);
@@ -160,7 +160,7 @@ interface ParsedResponse {
 
 /** Minimal HTTP/1.1 response reader: status line + headers, then
  * Content-Length / chunked / read-to-close body, capped to a preview size. */
-function readResponse(sock: net.Socket, readTimeoutMs: number, bodyCapBytes = 4_000): Promise<ParsedResponse> {
+export function readResponse(sock: net.Socket, readTimeoutMs: number, bodyCapBytes = 4_000): Promise<ParsedResponse> {
   return new Promise((resolve, reject) => {
     let buf = Buffer.alloc(0);
     let headersParsed = false;

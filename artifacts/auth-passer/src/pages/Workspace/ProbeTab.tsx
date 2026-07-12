@@ -3,7 +3,6 @@ import { AppRequestState } from './types';
 import { Button, Input, Textarea } from '@/components/ui/core';
 import { useProbeRequest, ProxyRequestInputMethod } from '@workspace/api-client-react';
 import { Play } from 'lucide-react';
-import { cn } from '@/lib/utils';
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'] as const;
 
@@ -14,16 +13,25 @@ export function ProbeTab({ request, setRequest, setResponse }: { request: AppReq
     timing: true,
     partial: true,
     expect100: false,
-    race: false
+    race: false,
+    cross: false,
   });
   
   const [timingRounds, setTimingRounds] = useState(5);
   const [raceConnections, setRaceConnections] = useState(10);
+  const [crossRounds, setCrossRounds] = useState(6);
+
+  // Site B state (for cross technique)
+  const [siteBUrl, setSiteBUrl] = useState('');
+  const [siteBMethod, setSiteBMethod] = useState<ProxyRequestInputMethod>('POST');
+  const [siteBToken, setSiteBToken] = useState('');
+  const [siteBAuthHeader, setSiteBAuthHeader] = useState('x-auth');
+  const [siteBBody, setSiteBBody] = useState('');
 
   const handleRun = () => {
     const selectedTechniques = Object.entries(techniques)
       .filter(([_, v]) => v)
-      .map(([k]) => k as "timing" | "partial" | "expect100" | "race");
+      .map(([k]) => k as "timing" | "partial" | "expect100" | "race" | "cross");
       
     if (selectedTechniques.length === 0) return;
 
@@ -42,7 +50,16 @@ export function ProbeTab({ request, setRequest, setResponse }: { request: AppReq
         body: ['POST', 'PUT', 'PATCH'].includes(request.method) ? request.body : undefined,
         techniques: selectedTechniques,
         timingRounds: techniques.timing ? timingRounds : undefined,
-        raceConnections: techniques.race ? raceConnections : undefined
+        raceConnections: techniques.race ? raceConnections : undefined,
+        // Cross technique fields
+        ...(techniques.cross ? {
+          crossRounds,
+          siteBUrl: siteBUrl || undefined,
+          siteBMethod: siteBMethod || undefined,
+          siteBBearerToken: siteBToken || undefined,
+          siteBAuthHeaderName: siteBAuthHeader || undefined,
+          siteBBody: siteBBody || undefined,
+        } : {}),
       }
     }, {
       onSuccess: (res) => {
@@ -67,7 +84,7 @@ export function ProbeTab({ request, setRequest, setResponse }: { request: AppReq
           </select>
           <Input 
             className="flex-1 font-mono text-sm"
-            placeholder="https://api.example.com/v1/resource"
+            placeholder="https://melbet.mobi/games-frame/service-api/..."
             value={request.url}
             onChange={e => setRequest({...request, url: e.target.value})}
             onKeyDown={e => e.key === 'Enter' && handleRun()}
@@ -83,79 +100,130 @@ export function ProbeTab({ request, setRequest, setResponse }: { request: AppReq
           <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Techniques</h3>
           
           <div className="space-y-3 bg-muted/10 p-3 rounded-md border border-border/50">
+            {/* Timing */}
             <label className="flex items-start gap-3 cursor-pointer">
-              <input 
-                type="checkbox" 
-                className="mt-1 accent-primary"
-                checked={techniques.timing}
-                onChange={e => setTechniques(prev => ({...prev, timing: e.target.checked}))}
-              />
+              <input type="checkbox" className="mt-1 accent-primary" checked={techniques.timing}
+                onChange={e => setTechniques(prev => ({...prev, timing: e.target.checked}))} />
               <div>
                 <div className="text-sm font-medium">Timing</div>
                 <div className="text-xs text-muted-foreground">Sends N identical requests and records response time + body. Shows whether the server returns varying content across identical calls.</div>
                 {techniques.timing && (
                   <div className="mt-2 flex items-center gap-2" onClick={e => e.preventDefault()}>
                     <span className="text-xs text-muted-foreground">Rounds:</span>
-                    <Input 
-                      type="number" 
-                      min={1} 
-                      max={20} 
-                      value={timingRounds}
+                    <Input type="number" min={1} max={20} value={timingRounds}
                       onChange={e => setTimingRounds(parseInt(e.target.value) || 1)}
-                      className="w-20 h-7 text-xs"
-                    />
+                      className="w-20 h-7 text-xs" />
                   </div>
                 )}
               </div>
             </label>
             
+            {/* Partial */}
             <label className="flex items-start gap-3 cursor-pointer">
-              <input 
-                type="checkbox" 
-                className="mt-1 accent-primary"
-                checked={techniques.partial}
-                onChange={e => setTechniques(prev => ({...prev, partial: e.target.checked}))}
-              />
+              <input type="checkbox" className="mt-1 accent-primary" checked={techniques.partial}
+                onChange={e => setTechniques(prev => ({...prev, partial: e.target.checked}))} />
               <div>
                 <div className="text-sm font-medium">Partial Read</div>
                 <div className="text-xs text-muted-foreground">Sends full request, then aborts TCP read immediately after receiving response status and headers. Stream destroyed after 512 bytes.</div>
               </div>
             </label>
             
+            {/* Expect-100 */}
             <label className="flex items-start gap-3 cursor-pointer">
-              <input 
-                type="checkbox" 
-                className="mt-1 accent-primary"
-                checked={techniques.expect100}
-                onChange={e => setTechniques(prev => ({...prev, expect100: e.target.checked}))}
-              />
+              <input type="checkbox" className="mt-1 accent-primary" checked={techniques.expect100}
+                onChange={e => setTechniques(prev => ({...prev, expect100: e.target.checked}))} />
               <div>
                 <div className="text-sm font-medium">Expect-100</div>
                 <div className="text-xs text-muted-foreground">Sends request headers with Expect: 100-continue but withholds the body.</div>
               </div>
             </label>
 
+            {/* Race */}
             <label className="flex items-start gap-3 cursor-pointer">
-              <input 
-                type="checkbox" 
-                className="mt-1 accent-primary"
-                checked={techniques.race}
-                onChange={e => setTechniques(prev => ({...prev, race: e.target.checked}))}
-              />
+              <input type="checkbox" className="mt-1 accent-primary" checked={techniques.race}
+                onChange={e => setTechniques(prev => ({...prev, race: e.target.checked}))} />
               <div>
                 <div className="text-sm font-medium">Race (single-packet attack)</div>
-                <div className="text-xs text-muted-foreground">Opens N raw connections, holds every request one byte short of complete, then releases the final byte on all of them in the same tick — bypassing fetch/undici pooling jitter entirely so requests land inside the server's check-then-act window instead of being serialized.</div>
+                <div className="text-xs text-muted-foreground">Opens N raw connections, holds every request one byte short of complete, then releases the final byte on all of them in the same tick.</div>
                 {techniques.race && (
                   <div className="mt-2 flex items-center gap-2" onClick={e => e.preventDefault()}>
                     <span className="text-xs text-muted-foreground">Connections:</span>
-                    <Input 
-                      type="number" 
-                      min={2} 
-                      max={50} 
-                      value={raceConnections}
+                    <Input type="number" min={2} max={50} value={raceConnections}
                       onChange={e => setRaceConnections(parseInt(e.target.value) || 2)}
-                      className="w-20 h-7 text-xs"
-                    />
+                      className="w-20 h-7 text-xs" />
+                  </div>
+                )}
+              </div>
+            </label>
+
+            {/* Cross */}
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input type="checkbox" className="mt-1 accent-primary" checked={techniques.cross}
+                onChange={e => setTechniques(prev => ({...prev, cross: e.target.checked}))} />
+              <div className="flex-1">
+                <div className="text-sm font-medium">Cross-Site Probe</div>
+                <div className="text-xs text-muted-foreground">
+                  Alternates rounds using <span className="text-primary font-mono">opposite JWT tokens</span>: Site A's URL gets Site B's token, Site B's URL gets Site A's token.
+                  The game server responds with real data but the action is attributed to an account with no active session on that site — no effect on either real game.
+                  Uses raw sockets, not fetch.
+                </div>
+                {techniques.cross && (
+                  <div className="mt-3 space-y-3" onClick={e => e.preventDefault()}>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground w-16 shrink-0">Rounds:</span>
+                      <Input type="number" min={2} max={20} value={crossRounds}
+                        onChange={e => setCrossRounds(parseInt(e.target.value) || 2)}
+                        className="w-20 h-7 text-xs" />
+                      <span className="text-xs text-muted-foreground">(split evenly A/B)</span>
+                    </div>
+
+                    <div className="border border-dashed border-border/60 rounded-md p-3 space-y-2 bg-muted/5">
+                      <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1">Site B config</div>
+
+                      <div className="flex items-center gap-2">
+                        <select
+                          className="h-7 rounded border border-border bg-input px-2 text-xs font-mono font-bold shrink-0 w-24 appearance-none text-center"
+                          value={siteBMethod}
+                          onChange={e => setSiteBMethod(e.target.value as ProxyRequestInputMethod)}
+                        >
+                          {METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+                        </select>
+                        <Input
+                          className="flex-1 font-mono text-xs h-7"
+                          placeholder="https://1x-bet.mobi/games-frame/service-api/..."
+                          value={siteBUrl}
+                          onChange={e => setSiteBUrl(e.target.value)}
+                        />
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <Input
+                          list="auth-header-names-crossB"
+                          placeholder="Header (x-auth)"
+                          className="font-mono text-xs h-7 w-28 shrink-0"
+                          value={siteBAuthHeader}
+                          onChange={e => setSiteBAuthHeader(e.target.value)}
+                        />
+                        <datalist id="auth-header-names-crossB">
+                          <option value="x-auth" />
+                          <option value="Authorization" />
+                        </datalist>
+                        <Input
+                          type="password"
+                          placeholder="Site B bearer token (eyJhbGci...)"
+                          className="flex-1 font-mono text-xs h-7"
+                          value={siteBToken}
+                          onChange={e => setSiteBToken(e.target.value)}
+                        />
+                      </div>
+
+                      <Textarea
+                        className="font-mono text-xs resize-none h-16"
+                        placeholder={'{"WH":114,"LG":"en","GT":202,"UI":845810773,"AN":1,"UC":1}'}
+                        value={siteBBody}
+                        onChange={e => setSiteBBody(e.target.value)}
+                      />
+                    </div>
                   </div>
                 )}
               </div>
@@ -164,7 +232,9 @@ export function ProbeTab({ request, setRequest, setResponse }: { request: AppReq
         </section>
 
         <section className="space-y-2">
-          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Authentication</h3>
+          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+            {techniques.cross ? 'Site A Authentication' : 'Authentication'}
+          </h3>
           <div className="flex items-center gap-2">
             <div className="w-40 shrink-0">
               <Input 
@@ -194,7 +264,9 @@ export function ProbeTab({ request, setRequest, setResponse }: { request: AppReq
         {['POST', 'PUT', 'PATCH'].includes(request.method) && (
           <section className="space-y-2 flex-1 flex flex-col min-h-[200px]">
             <div className="flex items-center justify-between">
-              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Body</h3>
+              <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                {techniques.cross ? 'Site A Body' : 'Body'}
+              </h3>
               <select 
                 className="bg-transparent text-xs font-mono text-muted-foreground focus:outline-none focus:text-primary appearance-none cursor-pointer"
                 value={request.contentType}
@@ -207,7 +279,7 @@ export function ProbeTab({ request, setRequest, setResponse }: { request: AppReq
             </div>
             <Textarea 
               className="flex-1 font-mono text-xs resize-none"
-              placeholder="{&#10;  &quot;key&quot;: &quot;value&quot;&#10;}"
+              placeholder='{&#10;  "key": "value"&#10;}'
               value={request.body}
               onChange={e => setRequest({...request, body: e.target.value})}
             />

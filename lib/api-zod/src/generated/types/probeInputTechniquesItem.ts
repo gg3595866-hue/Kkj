@@ -14,4 +14,5 @@ export const ProbeInputTechniquesItem = {
   partial: 'partial',
   expect100: 'expect100',
   race: 'race',
+  cross: 'cross',
 } as const;

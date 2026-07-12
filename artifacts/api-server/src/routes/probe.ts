@@ -2,7 +2,8 @@ import { Router } from "express";
 import { fetch as undiciFetch, Agent, request as undiciRequest } from "undici";
 import type { IncomingHttpHeaders } from "undici/types/header";
 import * as zlib from "node:zlib";
-import { runRace } from "./probe-race.js";
+import * as net from "node:net";
+import { runRace, buildRawHttp1Request, connectSocket, writeAndDrain, readResponse } from "./probe-race.js";
 
 const probeRouter = Router();
 
@@ -366,6 +367,118 @@ async function runExpect100(
   }
 }
 
+// ─── Technique 5: Cross-site probe (raw socket) ──────────────────────────────
+// Alternates rounds between two mirror sites using swapped JWT tokens:
+//   Even rounds → Site A's URL  +  Site B's x-auth token
+//   Odd  rounds → Site B's URL  +  Site A's x-auth token
+//
+// Both sites share the same game engine. By cross-authenticating, the server
+// processes the request and returns real game data, but the action is
+// attributed to an account that has no active session on that site — so it
+// has no effect on either player's real game state.
+//
+// Uses raw TCP/TLS sockets (same primitives as the race technique) instead of
+// undici/fetch so the request bypasses Node's connection pool, avoids any
+// HTTP keep-alive reuse that could cause a fetch to silently fail on a
+// cross-origin connection, and gives us full control over the wire bytes.
+async function runCross(opts: {
+  urlA: string;
+  methodA: string;
+  headersA: Record<string, string>;
+  bodyA: string | null | undefined;
+  urlB: string;
+  methodB: string;
+  headersB: Record<string, string>;
+  bodyB: string | null | undefined;
+  rounds: number;
+}) {
+  const { urlA, methodA, headersA, bodyA, urlB, methodB, headersB, bodyB, rounds } = opts;
+
+  // ── Swap auth headers ──────────────────────────────────────────────────────
+  // crossA = Site A URL  +  Site B's auth value  (B's headers, keep A's non-auth)
+  // crossB = Site B URL  +  Site A's auth value  (A's headers, keep B's non-auth)
+  const crossA: Record<string, string> = { ...headersA };
+  const crossB: Record<string, string> = { ...headersB };
+
+  const isAuthKey = (k: string) =>
+    k.toLowerCase() === "x-auth" || k.toLowerCase() === "authorization";
+
+  const authKeyA = Object.keys(headersA).find(isAuthKey);
+  const authKeyB = Object.keys(headersB).find(isAuthKey);
+
+  if (authKeyB) {
+    if (authKeyA && authKeyA !== authKeyB) delete crossA[authKeyA];
+    crossA[authKeyB] = headersB[authKeyB]; // Site A URL now carries Site B's token
+  }
+  if (authKeyA) {
+    if (authKeyB && authKeyB !== authKeyA) delete crossB[authKeyB];
+    crossB[authKeyA] = headersA[authKeyA]; // Site B URL now carries Site A's token
+  }
+
+  const results = [];
+
+  for (let i = 0; i < rounds; i++) {
+    const useA       = i % 2 === 0;
+    const targetUrl  = useA ? urlA  : urlB;
+    const method     = useA ? methodA  : methodB;
+    const headers    = useA ? crossA   : crossB;
+    const body       = useA ? bodyA    : bodyB;
+    const targetSite = useA ? "A" : "B" as "A" | "B";
+    const authSite   = useA ? "B" : "A" as "A" | "B";
+
+    const t0 = Date.now();
+    let sock: net.Socket | null = null;
+
+    try {
+      const urlObj = new URL(targetUrl);
+
+      // ── Build raw HTTP/1.1 request ─────────────────────────────────────────
+      const reqBuf = buildRawHttp1Request(urlObj, method, headers, body ?? null);
+
+      // ── Open a fresh socket per round — no pooling, no reuse ───────────────
+      sock = await connectSocket(urlObj, 15_000) as net.Socket;
+      sock.setNoDelay(true);
+
+      await writeAndDrain(sock, reqBuf);
+      const resp = await readResponse(sock, 15_000, 8_000);
+      const durationMs = Date.now() - t0;
+
+      let bodyText = resp.body;
+      if (bodyText.length > 8_000) bodyText = bodyText.slice(0, 8_000) + "\n…(truncated)";
+
+      results.push({
+        durationMs,
+        status:          resp.status,
+        statusText:      resp.statusText || String(resp.status),
+        responseHeaders: resp.headers,
+        body:            bodyText,
+        error:           null,
+        note:  `Round ${i + 1} — Site ${targetSite} URL · Site ${authSite} token`,
+        site:       targetSite,
+        targetUrl,
+        authSite,
+      });
+    } catch (err: unknown) {
+      results.push({
+        durationMs:      Date.now() - t0,
+        status:          0,
+        statusText:      "Error",
+        responseHeaders: {},
+        body:            null,
+        error:  err instanceof Error ? err.message : String(err),
+        note:  `Round ${i + 1} — Site ${targetSite} URL · Site ${authSite} token — socket error`,
+        site:       targetSite,
+        targetUrl,
+        authSite,
+      });
+    } finally {
+      sock?.destroy();
+    }
+  }
+
+  return results;
+}
+
 // POST /api/proxy/probe
 probeRouter.post("/proxy/probe", async (req, res) => {
   const {
@@ -378,6 +491,13 @@ probeRouter.post("/proxy/probe", async (req, res) => {
     techniques = [],
     timingRounds = 5,
     raceConnections = 10,
+    crossRounds = 6,
+    siteBUrl,
+    siteBMethod,
+    siteBHeaders: siteBCustomHeaders = {},
+    siteBBearerToken,
+    siteBAuthHeaderName,
+    siteBBody,
   } = req.body;
 
   if (!url) {
@@ -385,7 +505,7 @@ probeRouter.post("/proxy/probe", async (req, res) => {
     return;
   }
   if (!Array.isArray(techniques) || techniques.length === 0) {
-    res.status(400).json({ error: "techniques[] is required (timing | partial | expect100 | race)" });
+    res.status(400).json({ error: "techniques[] is required (timing | partial | expect100 | race | cross)" });
     return;
   }
 
@@ -414,6 +534,35 @@ probeRouter.post("/proxy/probe", async (req, res) => {
         case "race":
           output.race = await runRace({ url, method, headers, body, connections: raceConnections });
           break;
+        case "cross": {
+          if (!siteBUrl) {
+            output.cross = { error: "siteBUrl is required for the cross technique" };
+            break;
+          }
+          const siteBHeaders = buildHeaders(
+            siteBCustomHeaders,
+            siteBBearerToken,
+            siteBAuthHeaderName
+          );
+          if (siteBBody && !["GET", "HEAD"].includes((siteBMethod ?? method).toUpperCase())) {
+            siteBHeaders["Content-Type"] =
+              siteBCustomHeaders["content-type"] ??
+              siteBCustomHeaders["Content-Type"] ??
+              "application/json";
+          }
+          output.cross = await runCross({
+            urlA:    url,
+            methodA: method,
+            headersA: headers,
+            bodyA:   body,
+            urlB:    siteBUrl,
+            methodB: siteBMethod ?? method,
+            headersB: siteBHeaders,
+            bodyB:   siteBBody,
+            rounds:  Math.min(crossRounds, 20),
+          });
+          break;
+        }
       }
     })
   );

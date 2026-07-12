@@ -6,6 +6,7 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { ProbeInputHeaders } from './probeInputHeaders';
+import type { ProbeInputSiteBHeaders } from './probeInputSiteBHeaders';
 import type { ProbeInputTechniquesItem } from './probeInputTechniquesItem';
 
 export interface ProbeInput {
@@ -23,10 +24,40 @@ export interface ProbeInput {
      * partial — send full request, read response status+headers then immediately abort before reading body (avoids fully consuming the response stream).
      * expect100 — send headers with Expect:100-continue and withhold the body; captures whatever the server replies before it receives payload.
      * race — open N raw connections, hold every request just short of complete, then release the final bytes on all connections in the same tick (single-packet / last-byte-sync attack) so they land inside the server's check-then-act window instead of being serialized.
+     * cross — alternate timing rounds between Site A (primary URL/token) and Site B (mirror site with separate account), so each site only sees half the probe volume and the server does not flag repeated identical requests from one session.
      */
   techniques: ProbeInputTechniquesItem[];
   /** Number of requests to send for the timing technique */
   timingRounds?: number;
   /** Number of simultaneous connections to open for the race technique */
   raceConnections?: number;
+  /** Total rounds for the cross technique (split evenly: even rounds → Site A, odd rounds → Site B) */
+  crossRounds?: number;
+  /**
+     * Cross probe: URL for Site B (the mirror site with a separate account)
+     * @nullable
+     */
+  siteBUrl?: string | null;
+  /**
+     * Cross probe: HTTP method for Site B (defaults to the same method as Site A)
+     * @nullable
+     */
+  siteBMethod?: string | null;
+  /** Cross probe: custom headers for Site B (e.g. sec-ch-ua, referrer overrides) */
+  siteBHeaders?: ProbeInputSiteBHeaders;
+  /**
+     * Cross probe: bearer token for Site B account
+     * @nullable
+     */
+  siteBBearerToken?: string | null;
+  /**
+     * Cross probe: auth header name for Site B (default x-auth or Authorization)
+     * @nullable
+     */
+  siteBAuthHeaderName?: string | null;
+  /**
+     * Cross probe: request body for Site B (usually same structure as Site A but with Site B user ID)
+     * @nullable
+     */
+  siteBBody?: string | null;
 }

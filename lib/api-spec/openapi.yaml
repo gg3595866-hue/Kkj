@@ -318,12 +318,13 @@ components:
           type: array
           items:
             type: string
-            enum: [timing, partial, expect100, race]
+            enum: [timing, partial, expect100, race, cross]
           description: |
             timing — send N identical requests and record response time + body for each (reveals variance in server state).
             partial — send full request, read response status+headers then immediately abort before reading body (avoids fully consuming the response stream).
             expect100 — send headers with Expect:100-continue and withhold the body; captures whatever the server replies before it receives payload.
             race — open N raw connections, hold every request just short of complete, then release the final bytes on all connections in the same tick (single-packet / last-byte-sync attack) so they land inside the server's check-then-act window instead of being serialized.
+            cross — alternate timing rounds between Site A (primary URL/token) and Site B (mirror site with separate account), so each site only sees half the probe volume and the server does not flag repeated identical requests from one session.
         timingRounds:
           type: integer
           default: 5
@@ -332,6 +333,30 @@ components:
           type: integer
           default: 10
           description: Number of simultaneous connections to open for the race technique
+        crossRounds:
+          type: integer
+          default: 6
+          description: "Total rounds for the cross technique (split evenly: even rounds → Site A, odd rounds → Site B)"
+        siteBUrl:
+          type: ["string", "null"]
+          description: "Cross probe: URL for Site B (the mirror site with a separate account)"
+        siteBMethod:
+          type: ["string", "null"]
+          description: "Cross probe: HTTP method for Site B (defaults to the same method as Site A)"
+        siteBHeaders:
+          type: object
+          additionalProperties:
+            type: string
+          description: "Cross probe: custom headers for Site B (e.g. sec-ch-ua, referrer overrides)"
+        siteBBearerToken:
+          type: ["string", "null"]
+          description: "Cross probe: bearer token for Site B account"
+        siteBAuthHeaderName:
+          type: ["string", "null"]
+          description: "Cross probe: auth header name for Site B (default x-auth or Authorization)"
+        siteBBody:
+          type: ["string", "null"]
+          description: "Cross probe: request body for Site B (usually same structure as Site A but with Site B user ID)"
 
     ProbeOutput:
       type: object
@@ -346,6 +371,31 @@ components:
           $ref: "#/components/schemas/ProbeRound"
         race:
           $ref: "#/components/schemas/RaceResult"
+        cross:
+          type: array
+          items:
+            $ref: "#/components/schemas/CrossRound"
+
+    CrossRound:
+      allOf:
+        - $ref: "#/components/schemas/ProbeRound"
+        - type: object
+          required:
+            - site
+            - targetUrl
+            - authSite
+          properties:
+            site:
+              type: string
+              enum: [A, B]
+              description: Which site's URL was targeted this round
+            targetUrl:
+              type: string
+              description: The URL that was actually called
+            authSite:
+              type: string
+              enum: [A, B]
+              description: Which site's JWT token was used (opposite of targetUrl's site)
 
     RaceResult:
       type: object
