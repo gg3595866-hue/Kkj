@@ -125,6 +125,54 @@ export const DeleteSavedRequestResponse = zod.void()
 
 
 /**
+ * @summary Probe a URL using timing analysis, partial-abort, or Expect-100-continue
+ */
+export const probeRequestBodyMethodDefault = `POST`;
+export const probeRequestBodyTimingRoundsDefault = 5;
+
+export const ProbeRequestBody = zod.object({
+  "url": zod.string(),
+  "method": zod.string().default(probeRequestBodyMethodDefault),
+  "headers": zod.record(zod.string(), zod.string()).optional(),
+  "bearerToken": zod.string().nullish(),
+  "authHeaderName": zod.string().nullish(),
+  "body": zod.string().nullish(),
+  "techniques": zod.array(zod.enum(['timing', 'partial', 'expect100'])).describe('timing — send N identical requests and record response time + body for each (reveals variance in server state).\npartial — send full request, read response status+headers then immediately abort before reading body (avoids fully consuming the response stream).\nexpect100 — send headers with Expect:100-continue and withhold the body; captures whatever the server replies before it receives payload.\n'),
+  "timingRounds": zod.number().default(probeRequestBodyTimingRoundsDefault).describe('Number of requests to send for the timing technique')
+})
+
+export const ProbeRequestResponse = zod.object({
+  "timing": zod.array(zod.object({
+  "durationMs": zod.number(),
+  "status": zod.number(),
+  "statusText": zod.string().optional(),
+  "responseHeaders": zod.record(zod.string(), zod.string()).optional(),
+  "body": zod.string().nullish(),
+  "error": zod.string().nullish(),
+  "note": zod.string().optional().describe('Human-readable description of what happened')
+})).optional(),
+  "partial": zod.object({
+  "durationMs": zod.number(),
+  "status": zod.number(),
+  "statusText": zod.string().optional(),
+  "responseHeaders": zod.record(zod.string(), zod.string()).optional(),
+  "body": zod.string().nullish(),
+  "error": zod.string().nullish(),
+  "note": zod.string().optional().describe('Human-readable description of what happened')
+}).optional(),
+  "expect100": zod.object({
+  "durationMs": zod.number(),
+  "status": zod.number(),
+  "statusText": zod.string().optional(),
+  "responseHeaders": zod.record(zod.string(), zod.string()).optional(),
+  "body": zod.string().nullish(),
+  "error": zod.string().nullish(),
+  "note": zod.string().optional().describe('Human-readable description of what happened')
+}).optional()
+})
+
+
+/**
  * Tries each endpoint path (GET then POST) without triggering game actions. Returns which paths respond with data.
  * @summary Probe multiple endpoint paths with the same auth token
  */

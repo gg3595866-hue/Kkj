@@ -72,7 +72,7 @@ export function ImportFetchDialog({ request, setRequest }: { request: AppRequest
                rawHeaders[key] = value;
              });
           } else if (Array.isArray(interceptedOptions.headers)) {
-            interceptedOptions.headers.forEach(([key, value]) => {
+            interceptedOptions.headers.forEach(([key, value]: [any, any]) => {
               rawHeaders[key] = value;
             });
           } else {

@@ -19,6 +19,7 @@ export function Sidebar({ request, setRequest }: { request: AppRequestState, set
       url: req.url,
       method: req.method as any,
       bearerToken: req.bearerToken || '',
+      authHeaderName: req.authHeaderName || 'Authorization',
       headers: req.headers ? Object.entries(req.headers).map(([k,v], i) => ({ id: crypto.randomUUID(), key: k, value: String(v) })) : [],
       body: req.body || '',
       contentType: req.contentType || 'application/json'

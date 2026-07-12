@@ -24,6 +24,8 @@ import type {
   HealthStatus,
   HistoryEntry,
   ListRequestHistoryParams,
+  ProbeInput,
+  ProbeOutput,
   ProxyRequestInput,
   ProxyResponse,
   SavedRequest,
@@ -498,6 +500,77 @@ export const useDeleteSavedRequest = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getDeleteSavedRequestMutationOptions(options));
+    }
+
+export const getProbeRequestUrl = () => {
+
+
+
+
+  return `/api/proxy/probe`
+}
+
+/**
+ * @summary Probe a URL using timing analysis, partial-abort, or Expect-100-continue
+ */
+export const probeRequest = async (probeInput: ProbeInput, options?: RequestInit): Promise<ProbeOutput> => {
+
+  return customFetch<ProbeOutput>(getProbeRequestUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(probeInput)
+  }
+);}
+
+
+
+
+
+export const getProbeRequestMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof probeRequest>>, TError,{data: BodyType<ProbeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof probeRequest>>, TError,{data: BodyType<ProbeInput>}, TContext> => {
+
+const mutationKey = ['probeRequest'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof probeRequest>>, {data: BodyType<ProbeInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  probeRequest(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ProbeRequestMutationResult = NonNullable<Awaited<ReturnType<typeof probeRequest>>>
+    export type ProbeRequestMutationBody = BodyType<ProbeInput>
+    export type ProbeRequestMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Probe a URL using timing analysis, partial-abort, or Expect-100-continue
+ */
+export const useProbeRequest = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof probeRequest>>, TError,{data: BodyType<ProbeInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof probeRequest>>,
+        TError,
+        {data: BodyType<ProbeInput>},
+        TContext
+      > => {
+      return useMutation(getProbeRequestMutationOptions(options));
     }
 
 export const getScanEndpointsUrl = () => {

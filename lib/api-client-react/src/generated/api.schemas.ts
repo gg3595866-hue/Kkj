@@ -9,6 +9,58 @@ export interface HealthStatus {
   status: string;
 }
 
+export type ProbeInputHeaders = {[key: string]: string};
+
+export type ProbeInputTechniquesItem = typeof ProbeInputTechniquesItem[keyof typeof ProbeInputTechniquesItem];
+
+
+export const ProbeInputTechniquesItem = {
+  timing: 'timing',
+  partial: 'partial',
+  expect100: 'expect100',
+} as const;
+
+export interface ProbeInput {
+  url: string;
+  method?: string;
+  headers?: ProbeInputHeaders;
+  /** @nullable */
+  bearerToken?: string | null;
+  /** @nullable */
+  authHeaderName?: string | null;
+  /** @nullable */
+  body?: string | null;
+  /**
+     * timing — send N identical requests and record response time + body for each (reveals variance in server state).
+     * partial — send full request, read response status+headers then immediately abort before reading body (avoids fully consuming the response stream).
+     * expect100 — send headers with Expect:100-continue and withhold the body; captures whatever the server replies before it receives payload.
+     */
+  techniques: ProbeInputTechniquesItem[];
+  /** Number of requests to send for the timing technique */
+  timingRounds?: number;
+}
+
+export type ProbeRoundResponseHeaders = {[key: string]: string};
+
+export interface ProbeRound {
+  durationMs: number;
+  status: number;
+  statusText?: string;
+  responseHeaders?: ProbeRoundResponseHeaders;
+  /** @nullable */
+  body?: string | null;
+  /** @nullable */
+  error?: string | null;
+  /** Human-readable description of what happened */
+  note?: string;
+}
+
+export interface ProbeOutput {
+  timing?: ProbeRound[];
+  partial?: ProbeRound;
+  expect100?: ProbeRound;
+}
+
 export type ScanInputHeaders = {[key: string]: string};
 
 export interface ScanInput {

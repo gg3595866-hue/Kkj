@@ -133,6 +133,31 @@ paths:
         "204":
           description: Deleted
 
+  /proxy/probe:
+    post:
+      operationId: probeRequest
+      tags: [proxy]
+      summary: Probe a URL using timing analysis, partial-abort, or Expect-100-continue
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProbeInput"
+      responses:
+        "200":
+          description: Probe results for each technique requested
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProbeOutput"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /proxy/scan:
     post:
       operationId: scanEndpoints
@@ -192,6 +217,77 @@ components:
           type: string
       required:
         - status
+
+    ProbeInput:
+      type: object
+      required:
+        - url
+        - techniques
+      properties:
+        url:
+          type: string
+        method:
+          type: string
+          default: POST
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        bearerToken:
+          type: ["string", "null"]
+        authHeaderName:
+          type: ["string", "null"]
+        body:
+          type: ["string", "null"]
+        techniques:
+          type: array
+          items:
+            type: string
+            enum: [timing, partial, expect100]
+          description: |
+            timing — send N identical requests and record response time + body for each (reveals variance in server state).
+            partial — send full request, read response status+headers then immediately abort before reading body (avoids fully consuming the response stream).
+            expect100 — send headers with Expect:100-continue and withhold the body; captures whatever the server replies before it receives payload.
+        timingRounds:
+          type: integer
+          default: 5
+          description: Number of requests to send for the timing technique
+
+    ProbeOutput:
+      type: object
+      properties:
+        timing:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProbeRound"
+        partial:
+          $ref: "#/components/schemas/ProbeRound"
+        expect100:
+          $ref: "#/components/schemas/ProbeRound"
+
+    ProbeRound:
+      type: object
+      required:
+        - durationMs
+        - status
+      properties:
+        durationMs:
+          type: integer
+        status:
+          type: integer
+        statusText:
+          type: string
+        responseHeaders:
+          type: object
+          additionalProperties:
+            type: string
+        body:
+          type: ["string", "null"]
+        error:
+          type: ["string", "null"]
+        note:
+          type: string
+          description: Human-readable description of what happened
 
     ScanInput:
       type: object

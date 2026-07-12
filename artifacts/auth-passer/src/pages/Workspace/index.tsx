@@ -3,8 +3,11 @@ import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels';
 import { Sidebar } from './Sidebar';
 import { RequestBuilder } from './RequestBuilder';
 import { ResponsePanel } from './ResponsePanel';
+import { ProbeTab } from './ProbeTab';
+import { ProbeResults } from './ProbeResults';
 import { AppRequestState } from './types';
 import { ProxyResponse } from '@workspace/api-client-react';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/core';
 
 function ResizeHandle() {
   return (
@@ -47,13 +50,30 @@ export default function Workspace() {
         <ResizeHandle />
         
         <Panel defaultSize={40} minSize={30}>
-          <RequestBuilder request={request} setRequest={setRequest} setResponse={setResponse} />
+          <Tabs defaultValue="builder" className="flex flex-col h-full border-r">
+            <div className="h-10 border-b flex items-center px-4 shrink-0 bg-card">
+              <TabsList className="bg-background">
+                <TabsTrigger value="builder">Builder</TabsTrigger>
+                <TabsTrigger value="probe">Probe</TabsTrigger>
+              </TabsList>
+            </div>
+            <TabsContent value="builder" className="flex-1 overflow-hidden m-0 data-[state=active]:flex flex-col">
+              <RequestBuilder request={request} setRequest={setRequest} setResponse={setResponse} />
+            </TabsContent>
+            <TabsContent value="probe" className="flex-1 overflow-hidden m-0 data-[state=active]:flex flex-col">
+              <ProbeTab request={request} setRequest={setRequest} setResponse={setResponse} />
+            </TabsContent>
+          </Tabs>
         </Panel>
         
         <ResizeHandle />
         
         <Panel defaultSize={40} minSize={20}>
-          <ResponsePanel response={response} />
+          {response && (response as any)._isProbe ? (
+            <ProbeResults response={response} />
+          ) : (
+            <ResponsePanel response={response} />
+          )}
         </Panel>
       </PanelGroup>
     </div>

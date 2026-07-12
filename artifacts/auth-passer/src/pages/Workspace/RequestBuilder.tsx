@@ -58,7 +58,6 @@ export function RequestBuilder({ request, setRequest, setResponse }: { request: 
         method: request.method,
         headers: Object.keys(headersRecord).length > 0 ? headersRecord : undefined,
         bearerToken: request.bearerToken || undefined,
-        authHeaderName: request.authHeaderName || undefined,
         body: ['POST', 'PUT', 'PATCH'].includes(request.method) ? request.body : undefined,
         contentType: request.contentType || undefined
       }
