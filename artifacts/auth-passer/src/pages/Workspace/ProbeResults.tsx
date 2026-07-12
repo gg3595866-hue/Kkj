@@ -26,8 +26,10 @@ export function ProbeResults({ response }: { response: any }) {
             {response.expect100 && <Expect100Result round={response.expect100} />}
             {response.race && <RaceResultView race={response.race} />}
             {response.cross && <CrossResult rounds={response.cross} />}
+            {response.methodprobe && <MethodProbeResult rounds={response.methodprobe} />}
+            {response.validationprobe && <ValidationProbeResult rounds={response.validationprobe} />}
             
-            {!response.timing && !response.partial && !response.expect100 && !response.race && !response.cross && (
+            {!response.timing && !response.partial && !response.expect100 && !response.race && !response.cross && !response.methodprobe && !response.validationprobe && (
               <div className="text-muted-foreground text-sm font-mono text-center mt-10">
                 No probe techniques were executed.
               </div>
@@ -277,6 +279,134 @@ function RaceResultView({ race }: { race: any }) {
             </tbody>
           </table>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function MethodProbeResult({ rounds }: { rounds: any[] }) {
+  return (
+    <div className="space-y-3">
+      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Method Probe</h3>
+      <div className="text-xs text-muted-foreground bg-muted/10 p-2 rounded border border-border/30">
+        Non-mutating methods sent with the same auth. None of these register a game action.
+      </div>
+      <div className="border border-border/50 rounded-md overflow-hidden">
+        <table className="w-full text-left text-sm font-mono">
+          <thead className="bg-muted/30 text-xs">
+            <tr>
+              <th className="px-3 py-2 border-b w-24 text-muted-foreground">Method</th>
+              <th className="px-3 py-2 border-b w-24 text-muted-foreground">Duration</th>
+              <th className="px-3 py-2 border-b w-20 text-muted-foreground">Status</th>
+              <th className="px-3 py-2 border-b w-40 text-muted-foreground">Allow</th>
+              <th className="px-3 py-2 border-b text-muted-foreground">Body / Error</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/30">
+            {rounds.map((r, i) => {
+              const bodyStr = typeof r.body === 'string' ? r.body : r.body ? JSON.stringify(r.body) : '';
+              return (
+                <tr key={i} className="hover:bg-muted/10 transition-colors align-top">
+                  <td className="px-3 py-2 font-bold text-primary">{r.httpMethod}</td>
+                  <td className="px-3 py-2">{r.durationMs}ms</td>
+                  <td className="px-3 py-2">
+                    <Badge variant={getStatusVariant(r.status)}>{r.status || 'err'}</Badge>
+                  </td>
+                  <td className="px-3 py-2 text-[11px] text-green-400 break-all">{r.allowHeader || '—'}</td>
+                  <td className="px-3 py-2">
+                    {r.error ? (
+                      <span className="text-destructive text-[11px] break-all">{r.error}</span>
+                    ) : bodyStr ? (
+                      <span className="text-muted-foreground whitespace-pre-wrap flex-1 break-all text-[11px] leading-tight">
+                        {bodyStr.substring(0, 160)}
+                      </span>
+                    ) : (
+                      <span className="text-muted-foreground/50 text-[11px] italic">Empty body</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function ValidationProbeResult({ rounds }: { rounds: any[] | { error: string } }) {
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+
+  if (!Array.isArray(rounds)) {
+    return (
+      <div className="space-y-3">
+        <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Validation Probe</h3>
+        <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 p-3 rounded font-mono">
+          {(rounds as any).error}
+        </div>
+      </div>
+    );
+  }
+
+  const committed = rounds.filter(r => r.committed);
+
+  return (
+    <div className="space-y-3">
+      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Validation Probe</h3>
+      {committed.length > 0 && (
+        <div className="text-xs text-yellow-400 bg-yellow-400/10 border border-yellow-400/30 p-2 rounded">
+          ⚠ {committed.length} patch(es) returned 2xx — these may have registered a real action: {committed.map(r => r.patch).join(', ')}
+        </div>
+      )}
+      <div className="border border-border/50 rounded-md overflow-hidden">
+        <table className="w-full text-left text-sm font-mono">
+          <thead className="bg-muted/30 text-xs">
+            <tr>
+              <th className="px-3 py-2 border-b w-32 text-muted-foreground">Patch</th>
+              <th className="px-3 py-2 border-b w-24 text-muted-foreground">Duration</th>
+              <th className="px-3 py-2 border-b w-20 text-muted-foreground">Status</th>
+              <th className="px-3 py-2 border-b text-muted-foreground">Body / Error</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/30">
+            {rounds.map((r, i) => {
+              const bodyStr = typeof r.body === 'string' ? r.body : r.body ? JSON.stringify(r.body) : '';
+              const hasMore = bodyStr && bodyStr.length > 120;
+              const expanded = expandedIdx === i;
+              return (
+                <tr key={i} className={`hover:bg-muted/10 transition-colors align-top ${r.committed ? 'bg-yellow-400/5' : ''}`}>
+                  <td className="px-3 py-2 text-[11px] text-primary break-all">{r.patch}</td>
+                  <td className="px-3 py-2">{r.durationMs}ms</td>
+                  <td className="px-3 py-2">
+                    <Badge variant={getStatusVariant(r.status)}>{r.status || 'err'}</Badge>
+                    {r.committed && <span className="ml-1 text-[9px] text-yellow-400">⚠committed</span>}
+                  </td>
+                  <td className="px-3 py-2">
+                    {r.error ? (
+                      <span className="text-destructive text-[11px] break-all">{r.error}</span>
+                    ) : bodyStr ? (
+                      <div
+                        className={`flex gap-2 ${hasMore ? 'cursor-pointer' : ''}`}
+                        onClick={() => hasMore && setExpandedIdx(expanded ? null : i)}
+                      >
+                        <span className="text-muted-foreground whitespace-pre-wrap flex-1 break-all text-[11px] leading-tight">
+                          {expanded ? bodyStr : bodyStr.substring(0, 120) + (hasMore && !expanded ? '...' : '')}
+                        </span>
+                        {hasMore && (
+                          <span className="text-muted-foreground shrink-0 mt-0.5">
+                            {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground/50 text-[11px] italic">Empty body</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
     </div>
   );

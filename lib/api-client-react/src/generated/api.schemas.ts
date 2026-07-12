@@ -61,6 +61,8 @@ export const ProbeInputTechniquesItem = {
   expect100: 'expect100',
   race: 'race',
   cross: 'cross',
+  methodprobe: 'methodprobe',
+  validationprobe: 'validationprobe',
 } as const;
 
 /**
@@ -84,6 +86,8 @@ export interface ProbeInput {
      * expect100 — send headers with Expect:100-continue and withhold the body; captures whatever the server replies before it receives payload.
      * race — open N raw connections, hold every request just short of complete, then release the final bytes on all connections in the same tick (single-packet / last-byte-sync attack) so they land inside the server's check-then-act window instead of being serialized.
      * cross — alternate timing rounds between Site A (primary URL/token) and Site B (mirror site with separate account), so each site only sees half the probe volume and the server does not flag repeated identical requests from one session.
+     * methodprobe — send OPTIONS, HEAD, and GET to the same URL with the same auth and record what the server allows; these are non-mutating HTTP methods that reveal server capability without registering any game action.
+     * validationprobe — send the request body N times with a different field patched each time (e.g. AN=-1, GT=0); requests that fail pre-commit validation reveal server behaviour without registering an action.
      */
   techniques: ProbeInputTechniquesItem[];
   /** Number of requests to send for the timing technique */
@@ -119,6 +123,8 @@ export interface ProbeInput {
      * @nullable
      */
   siteBBody?: string | null;
+  /** Validation probe: JSON strings, each merged over the base body for one sub-request (e.g. '{"AN":-1}' patches the action number) */
+  validationPatches?: string[];
 }
 
 export type ProbeRoundResponseHeaders = {[key: string]: string};
@@ -202,12 +208,31 @@ export type CrossRound = ProbeRound & {
   authSite: CrossRoundAuthSite;
 };
 
+export type MethodProbeRound = ProbeRound & ({
+  /** The HTTP method that was sent (OPTIONS, HEAD, GET) */
+  httpMethod: string;
+  /**
+     * Value of the Allow response header, if present
+     * @nullable
+     */
+  allowHeader?: string | null;
+});
+
+export type ValidationProbeRound = ProbeRound & {
+  /** The JSON patch object that was merged over the base body */
+  patch: string;
+  /** True if the server returned 2xx (likely committed an action), false if rejected at validation */
+  committed?: boolean;
+};
+
 export interface ProbeOutput {
   timing?: ProbeRound[];
   partial?: ProbeRound;
   expect100?: ProbeRound;
   race?: RaceResult;
   cross?: CrossRound[];
+  methodprobe?: MethodProbeRound[];
+  validationprobe?: ValidationProbeRound[];
 }
 
 export type ScanInputHeaders = {[key: string]: string};

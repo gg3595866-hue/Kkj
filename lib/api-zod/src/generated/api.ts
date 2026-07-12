@@ -165,7 +165,7 @@ export const ProbeRequestBody = zod.object({
   "bearerToken": zod.string().nullish(),
   "authHeaderName": zod.string().nullish(),
   "body": zod.string().nullish(),
-  "techniques": zod.array(zod.enum(['timing', 'partial', 'expect100', 'race', 'cross'])).describe('timing — send N identical requests and record response time + body for each (reveals variance in server state).\npartial — send full request, read response status+headers then immediately abort before reading body (avoids fully consuming the response stream).\nexpect100 — send headers with Expect:100-continue and withhold the body; captures whatever the server replies before it receives payload.\nrace — open N raw connections, hold every request just short of complete, then release the final bytes on all connections in the same tick (single-packet \/ last-byte-sync attack) so they land inside the server\'s check-then-act window instead of being serialized.\ncross — alternate timing rounds between Site A (primary URL\/token) and Site B (mirror site with separate account), so each site only sees half the probe volume and the server does not flag repeated identical requests from one session.\n'),
+  "techniques": zod.array(zod.enum(['timing', 'partial', 'expect100', 'race', 'cross', 'methodprobe', 'validationprobe'])).describe('timing — send N identical requests and record response time + body for each (reveals variance in server state).\npartial — send full request, read response status+headers then immediately abort before reading body (avoids fully consuming the response stream).\nexpect100 — send headers with Expect:100-continue and withhold the body; captures whatever the server replies before it receives payload.\nrace — open N raw connections, hold every request just short of complete, then release the final bytes on all connections in the same tick (single-packet \/ last-byte-sync attack) so they land inside the server\'s check-then-act window instead of being serialized.\ncross — alternate timing rounds between Site A (primary URL\/token) and Site B (mirror site with separate account), so each site only sees half the probe volume and the server does not flag repeated identical requests from one session.\nmethodprobe — send OPTIONS, HEAD, and GET to the same URL with the same auth and record what the server allows; these are non-mutating HTTP methods that reveal server capability without registering any game action.\nvalidationprobe — send the request body N times with a different field patched each time (e.g. AN=-1, GT=0); requests that fail pre-commit validation reveal server behaviour without registering an action.\n'),
   "timingRounds": zod.number().default(probeRequestBodyTimingRoundsDefault).describe('Number of requests to send for the timing technique'),
   "raceConnections": zod.number().default(probeRequestBodyRaceConnectionsDefault).describe('Number of simultaneous connections to open for the race technique'),
   "crossRounds": zod.number().default(probeRequestBodyCrossRoundsDefault).describe('Total rounds for the cross technique (split evenly: even rounds → Site A, odd rounds → Site B)'),
@@ -174,7 +174,8 @@ export const ProbeRequestBody = zod.object({
   "siteBHeaders": zod.record(zod.string(), zod.string()).optional().describe('Cross probe: custom headers for Site B (e.g. sec-ch-ua, referrer overrides)'),
   "siteBBearerToken": zod.string().nullish().describe('Cross probe: bearer token for Site B account'),
   "siteBAuthHeaderName": zod.string().nullish().describe('Cross probe: auth header name for Site B (default x-auth or Authorization)'),
-  "siteBBody": zod.string().nullish().describe('Cross probe: request body for Site B (usually same structure as Site A but with Site B user ID)')
+  "siteBBody": zod.string().nullish().describe('Cross probe: request body for Site B (usually same structure as Site A but with Site B user ID)'),
+  "validationPatches": zod.array(zod.string()).optional().describe('Validation probe: JSON strings, each merged over the base body for one sub-request (e.g. \'{\"AN\":-1}\' patches the action number)')
 })
 
 export const ProbeRequestResponse = zod.object({
@@ -235,6 +236,30 @@ export const ProbeRequestResponse = zod.object({
   "site": zod.enum(['A', 'B']).describe('Which site\'s URL was targeted this round'),
   "targetUrl": zod.string().describe('The URL that was actually called'),
   "authSite": zod.enum(['A', 'B']).describe('Which site\'s JWT token was used (opposite of targetUrl\'s site)')
+}))).optional(),
+  "methodprobe": zod.array(zod.object({
+  "durationMs": zod.number(),
+  "status": zod.number(),
+  "statusText": zod.string().optional(),
+  "responseHeaders": zod.record(zod.string(), zod.string()).optional(),
+  "body": zod.string().nullish(),
+  "error": zod.string().nullish(),
+  "note": zod.string().optional().describe('Human-readable description of what happened')
+}).and(zod.object({
+  "httpMethod": zod.string().describe('The HTTP method that was sent (OPTIONS, HEAD, GET)'),
+  "allowHeader": zod.string().nullish().describe('Value of the Allow response header, if present')
+}))).optional(),
+  "validationprobe": zod.array(zod.object({
+  "durationMs": zod.number(),
+  "status": zod.number(),
+  "statusText": zod.string().optional(),
+  "responseHeaders": zod.record(zod.string(), zod.string()).optional(),
+  "body": zod.string().nullish(),
+  "error": zod.string().nullish(),
+  "note": zod.string().optional().describe('Human-readable description of what happened')
+}).and(zod.object({
+  "patch": zod.string().describe('The JSON patch object that was merged over the base body'),
+  "committed": zod.boolean().optional().describe('True if the server returned 2xx (likely committed an action), false if rejected at validation')
 }))).optional()
 })
 

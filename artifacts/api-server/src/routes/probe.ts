@@ -367,6 +367,144 @@ async function runExpect100(
   }
 }
 
+// ─── Technique 5: Method capability probe ────────────────────────────────────
+// Sends OPTIONS, HEAD, and GET to the same URL with the same auth headers.
+// None of these methods carry a body and none should trigger a game action.
+// Useful for:
+//   - OPTIONS: reveals what methods the server allows (Allow header), CORS policy
+//   - HEAD:    confirms the endpoint exists and shows response headers without body
+//   - GET:     may return state data or a different error code than POST (405 vs 401 etc.)
+async function runMethodProbe(
+  url: string,
+  headers: Record<string, string>
+): Promise<unknown[]> {
+  const methods = ["OPTIONS", "HEAD", "GET"] as const;
+  const results = [];
+
+  for (const httpMethod of methods) {
+    const t0 = Date.now();
+    try {
+      const opts: Parameters<typeof undiciFetch>[1] = {
+        method: httpMethod,
+        headers: { ...headers, "Content-Length": "0" },
+        // @ts-expect-error undici dispatcher
+        dispatcher: insecureAgent,
+        signal: AbortSignal.timeout(10_000),
+        redirect: "follow",
+      };
+      const resp = await undiciFetch(url, opts);
+      const durationMs = Date.now() - t0;
+      const responseHeaders: Record<string, string> = {};
+      resp.headers.forEach((v, k) => { responseHeaders[k] = v; });
+      // HEAD has no body by definition
+      const respBody = httpMethod === "HEAD" ? null : await resp.text().catch(() => null);
+      results.push({
+        httpMethod,
+        durationMs,
+        status: resp.status,
+        statusText: resp.statusText || String(resp.status),
+        responseHeaders,
+        allowHeader: responseHeaders["allow"] ?? null,
+        body: respBody && respBody.length > 4_000 ? respBody.slice(0, 4_000) + "\n…(truncated)" : respBody,
+        error: null,
+        note: `${httpMethod} ${url}`,
+      });
+    } catch (err: unknown) {
+      results.push({
+        httpMethod,
+        durationMs: Date.now() - t0,
+        status: 0,
+        statusText: "Error",
+        responseHeaders: {},
+        allowHeader: null,
+        body: null,
+        error: err instanceof Error ? err.message : String(err),
+        note: `${httpMethod} ${url} — network error`,
+      });
+    }
+  }
+
+  return results;
+}
+
+// ─── Technique 6: Validation probe ───────────────────────────────────────────
+// Sends the base request body N times with one field patched each time.
+// The intent is to trigger server-side validation errors *before* the action
+// is committed — so we observe error responses and response shapes without
+// registering a real game move.
+//
+// Each patch is a JSON string (e.g. '{"AN":-1}') that is merged over the
+// base body before serialisation. Patches that cause a 2xx are flagged as
+// likely committed and should be treated with caution.
+async function runValidationProbe(
+  url: string,
+  method: string,
+  headers: Record<string, string>,
+  body: string | null | undefined,
+  patches: string[]
+): Promise<unknown[]> {
+  let baseObj: Record<string, unknown> = {};
+  try {
+    if (body) baseObj = JSON.parse(body);
+  } catch {
+    // body is not JSON; patches will still be applied as JSON merges
+  }
+
+  const results = [];
+
+  for (const patchStr of patches) {
+    const t0 = Date.now();
+    let patchObj: Record<string, unknown> = {};
+    try { patchObj = JSON.parse(patchStr); } catch { /* keep empty */ }
+    const patchedBody = JSON.stringify({ ...baseObj, ...patchObj });
+
+    try {
+      const opts: Parameters<typeof undiciFetch>[1] = {
+        method,
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: patchedBody,
+        // @ts-expect-error undici dispatcher
+        dispatcher: insecureAgent,
+        signal: AbortSignal.timeout(12_000),
+        redirect: "follow",
+      };
+      const resp = await undiciFetch(url, opts);
+      const durationMs = Date.now() - t0;
+      const responseHeaders: Record<string, string> = {};
+      resp.headers.forEach((v, k) => { responseHeaders[k] = v; });
+      const respBody = await resp.text().catch(() => null);
+      const committed = resp.status >= 200 && resp.status < 300;
+      results.push({
+        patch: patchStr,
+        committed,
+        durationMs,
+        status: resp.status,
+        statusText: resp.statusText || String(resp.status),
+        responseHeaders,
+        body: respBody && respBody.length > 4_000 ? respBody.slice(0, 4_000) + "\n…(truncated)" : respBody,
+        error: null,
+        note: committed
+          ? `⚠ 2xx — server may have committed this action. Patch: ${patchStr}`
+          : `Rejected (${resp.status}) — likely pre-commit validation. Patch: ${patchStr}`,
+      });
+    } catch (err: unknown) {
+      results.push({
+        patch: patchStr,
+        committed: false,
+        durationMs: Date.now() - t0,
+        status: 0,
+        statusText: "Error",
+        responseHeaders: {},
+        body: null,
+        error: err instanceof Error ? err.message : String(err),
+        note: `Network error. Patch: ${patchStr}`,
+      });
+    }
+  }
+
+  return results;
+}
+
 // ─── Technique 5: Cross-site probe (raw socket) ──────────────────────────────
 // Alternates rounds between two mirror sites using fully swapped identities:
 //
@@ -541,6 +679,20 @@ probeRouter.post("/proxy/probe", async (req, res) => {
         case "race":
           output.race = await runRace({ url, method, headers, body, connections: raceConnections });
           break;
+        case "methodprobe":
+          output.methodprobe = await runMethodProbe(url, headers);
+          break;
+        case "validationprobe": {
+          const validationPatches: string[] = Array.isArray(req.body.validationPatches)
+            ? req.body.validationPatches.slice(0, 20)
+            : [];
+          if (validationPatches.length === 0) {
+            output.validationprobe = { error: "validationPatches[] is required for the validationprobe technique" };
+          } else {
+            output.validationprobe = await runValidationProbe(url, method, headers, body, validationPatches);
+          }
+          break;
+        }
         case "cross": {
           if (!siteBUrl) {
             output.cross = { error: "siteBUrl is required for the cross technique" };

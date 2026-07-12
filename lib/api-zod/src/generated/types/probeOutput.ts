@@ -6,8 +6,10 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { CrossRound } from './crossRound';
+import type { MethodProbeRound } from './methodProbeRound';
 import type { ProbeRound } from './probeRound';
 import type { RaceResult } from './raceResult';
+import type { ValidationProbeRound } from './validationProbeRound';
 
 export interface ProbeOutput {
   timing?: ProbeRound[];
@@ -15,4 +17,6 @@ export interface ProbeOutput {
   expect100?: ProbeRound;
   race?: RaceResult;
   cross?: CrossRound[];
+  methodprobe?: MethodProbeRound[];
+  validationprobe?: ValidationProbeRound[];
 }

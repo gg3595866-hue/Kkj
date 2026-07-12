@@ -15,4 +15,6 @@ export const ProbeInputTechniquesItem = {
   expect100: 'expect100',
   race: 'race',
   cross: 'cross',
+  methodprobe: 'methodprobe',
+  validationprobe: 'validationprobe',
 } as const;

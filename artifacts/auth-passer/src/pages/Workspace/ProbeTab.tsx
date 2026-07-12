@@ -1,8 +1,60 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { AppRequestState } from './types';
 import { Button, Input, Textarea } from '@/components/ui/core';
 import { useProbeRequest, ProxyRequestInputMethod } from '@workspace/api-client-react';
-import { Play } from 'lucide-react';
+import { Play, ChevronDown, ChevronRight } from 'lucide-react';
+
+function decodeJwt(token: string): { header: Record<string, unknown>; payload: Record<string, unknown> } | null {
+  try {
+    const parts = token.trim().split('.');
+    if (parts.length < 2) return null;
+    const decode = (b64: string) => JSON.parse(atob(b64.replace(/-/g, '+').replace(/_/g, '/')));
+    return { header: decode(parts[0]), payload: decode(parts[1]) };
+  } catch {
+    return null;
+  }
+}
+
+function JwtDecoder({ token }: { token: string }) {
+  const [open, setOpen] = useState(false);
+  const decoded = useMemo(() => decodeJwt(token), [token]);
+  if (!token || !decoded) return null;
+  const exp = decoded.payload['exp'];
+  const expDate = typeof exp === 'number' ? new Date(exp * 1000).toLocaleString() : null;
+  const expired = typeof exp === 'number' && exp * 1000 < Date.now();
+  return (
+    <div className="border border-border/40 rounded-md bg-muted/5 overflow-hidden text-xs font-mono">
+      <button
+        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-muted/10 transition-colors text-left"
+        onClick={() => setOpen(o => !o)}
+      >
+        {open ? <ChevronDown className="w-3 h-3 shrink-0" /> : <ChevronRight className="w-3 h-3 shrink-0" />}
+        <span className="text-muted-foreground">JWT claims</span>
+        {expDate && (
+          <span className={`ml-auto text-[10px] ${expired ? 'text-destructive' : 'text-green-400'}`}>
+            {expired ? '✗ expired' : '✓ valid'} · exp {expDate}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div className="px-3 pb-3 space-y-2">
+          <div>
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Header</div>
+            <pre className="text-[10px] leading-relaxed whitespace-pre-wrap break-all text-foreground/80">
+              {JSON.stringify(decoded.header, null, 2)}
+            </pre>
+          </div>
+          <div>
+            <div className="text-[10px] text-muted-foreground uppercase tracking-wider mb-1">Payload</div>
+            <pre className="text-[10px] leading-relaxed whitespace-pre-wrap break-all text-foreground/80">
+              {JSON.stringify(decoded.payload, null, 2)}
+            </pre>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 const METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'] as const;
 
@@ -15,11 +67,22 @@ export function ProbeTab({ request, setRequest, setResponse }: { request: AppReq
     expect100: false,
     race: false,
     cross: false,
+    methodprobe: false,
+    validationprobe: false,
   });
   
   const [timingRounds, setTimingRounds] = useState(5);
   const [raceConnections, setRaceConnections] = useState(10);
   const [crossRounds, setCrossRounds] = useState(6);
+
+  // Validation probe state
+  const DEFAULT_PATCHES = [
+    '{"AN":-1}',
+    '{"AN":999999}',
+    '{"GT":0}',
+    '{"UC":0}',
+  ];
+  const [validationPatches, setValidationPatches] = useState(DEFAULT_PATCHES.join('\n'));
 
   // Site B state (for cross technique)
   const [siteBUrl, setSiteBUrl] = useState('');
@@ -31,7 +94,7 @@ export function ProbeTab({ request, setRequest, setResponse }: { request: AppReq
   const handleRun = () => {
     const selectedTechniques = Object.entries(techniques)
       .filter(([_, v]) => v)
-      .map(([k]) => k as "timing" | "partial" | "expect100" | "race" | "cross");
+      .map(([k]) => k as "timing" | "partial" | "expect100" | "race" | "cross" | "methodprobe" | "validationprobe");
       
     if (selectedTechniques.length === 0) return;
 
@@ -59,6 +122,13 @@ export function ProbeTab({ request, setRequest, setResponse }: { request: AppReq
           siteBBearerToken: siteBToken || undefined,
           siteBAuthHeaderName: siteBAuthHeader || undefined,
           siteBBody: siteBBody || undefined,
+        } : {}),
+        // Validation probe fields
+        ...(techniques.validationprobe ? {
+          validationPatches: validationPatches
+            .split('\n')
+            .map(p => p.trim())
+            .filter(Boolean),
         } : {}),
       }
     }, {
@@ -156,12 +226,45 @@ export function ProbeTab({ request, setRequest, setResponse }: { request: AppReq
               </div>
             </label>
 
+            {/* Method Probe */}
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input type="checkbox" className="mt-1 accent-primary" checked={techniques.methodprobe}
+                onChange={e => setTechniques(prev => ({...prev, methodprobe: e.target.checked}))} />
+              <div>
+                <div className="text-sm font-medium">Method Probe <span className="text-xs font-normal text-green-400 ml-1">✓ safe — no side effects</span></div>
+                <div className="text-xs text-muted-foreground">Sends OPTIONS, HEAD, and GET to the same URL. Non-mutating methods — reveals what the server allows and how it responds before any body is sent, without registering a game action.</div>
+              </div>
+            </label>
+
+            {/* Validation Probe */}
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input type="checkbox" className="mt-1 accent-primary" checked={techniques.validationprobe}
+                onChange={e => setTechniques(prev => ({...prev, validationprobe: e.target.checked}))} />
+              <div className="flex-1">
+                <div className="text-sm font-medium">Validation Probe <span className="text-xs font-normal text-yellow-400 ml-1">⚠ patches that return 2xx may commit</span></div>
+                <div className="text-xs text-muted-foreground">Sends the body multiple times with one field patched per round (e.g. AN=-1, GT=0). Requests that fail pre-commit validation reveal server error shapes without registering a real action. One patch per line.</div>
+                {techniques.validationprobe && (
+                  <div className="mt-2 space-y-1" onClick={e => e.preventDefault()}>
+                    <Textarea
+                      className="font-mono text-xs resize-none h-24"
+                      placeholder={'{"AN":-1}\n{"AN":999999}\n{"GT":0}'}
+                      value={validationPatches}
+                      onChange={e => setValidationPatches(e.target.value)}
+                    />
+                    <div className="text-xs text-muted-foreground">
+                      {validationPatches.split('\n').map(p => p.trim()).filter(Boolean).length} patches — each JSON object is merged over the base body
+                    </div>
+                  </div>
+                )}
+              </div>
+            </label>
+
             {/* Cross */}
             <label className="flex items-start gap-3 cursor-pointer">
               <input type="checkbox" className="mt-1 accent-primary" checked={techniques.cross}
                 onChange={e => setTechniques(prev => ({...prev, cross: e.target.checked}))} />
               <div className="flex-1">
-                <div className="text-sm font-medium">Cross-Site Probe</div>
+                <div className="text-sm font-medium">Cross-Site Probe <span className="text-xs font-normal text-red-400 ml-1">✗ blocked by per-domain JWT signing</span></div>
                 <div className="text-xs text-muted-foreground">
                   Alternates rounds using <span className="text-primary font-mono">opposite JWT tokens</span>: Site A's URL gets Site B's token, Site B's URL gets Site A's token.
                   The game server responds with real data but the action is attributed to an account with no active session on that site — no effect on either real game.
@@ -259,6 +362,7 @@ export function ProbeTab({ request, setRequest, setResponse }: { request: AppReq
               onChange={e => setRequest({...request, bearerToken: e.target.value})}
             />
           </div>
+          {request.bearerToken && <JwtDecoder token={request.bearerToken} />}
         </section>
 
         {['POST', 'PUT', 'PATCH'].includes(request.method) && (
