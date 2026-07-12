@@ -30,8 +30,9 @@ export function ProbeResults({ response }: { response: any }) {
             {response.methodprobe && <MethodProbeResult rounds={response.methodprobe} />}
             {response.validationprobe && <ValidationProbeResult rounds={response.validationprobe} />}
             {response.idprobe && <IdentityProbeResult result={response.idprobe} />}
+            {response.surrogateprobe && <SurrogateProbeResult result={response.surrogateprobe} />}
             
-            {!response.timing && !response.partial && !response.expect100 && !response.race && !response.cross && !response.methodprobe && !response.validationprobe && !response.replay && !response.idprobe && (
+            {!response.timing && !response.partial && !response.expect100 && !response.race && !response.cross && !response.methodprobe && !response.validationprobe && !response.replay && !response.idprobe && !response.surrogateprobe && (
               <div className="text-muted-foreground text-sm font-mono text-center mt-10">
                 No probe techniques were executed.
               </div>
@@ -498,6 +499,147 @@ function ValidationProbeResult({ rounds }: { rounds: any[] | { error: string } }
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+function SurrogateProbeResult({ result }: { result: any }) {
+  const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
+
+  const verdictConfig: Record<string, { label: string; className: string }> = {
+    safe_surrogate_channel: {
+      label: '✓ SAFE PROBING CHANNEL CONFIRMED — Server uses UI field (not JWT) as game-state key. ' +
+             'Your real account is untouched. Any request with a fake/nonexistent UI will return 422 safely.',
+      className: 'text-green-400 bg-green-400/10 border-green-400/30',
+    },
+    safe_rejected: {
+      label: '✓ All surrogate requests rejected safely. Real account untouched.',
+      className: 'text-green-400 bg-green-400/10 border-green-400/30',
+    },
+    surrogate_committed: {
+      label: '⚠ A surrogate request got 2xx — if you used a real account ID, an action may have committed on that account. ' +
+             'This confirms the JWT is NOT the write key — only the UI body field determines whose state changes.',
+      className: 'text-yellow-400 bg-yellow-400/10 border-yellow-400/30',
+    },
+    unknown: {
+      label: '△ Mixed or unexpected results — review per-request statuses below.',
+      className: 'text-muted-foreground bg-muted/10 border-border/30',
+    },
+  };
+
+  const vc = verdictConfig[result.verdict] ?? verdictConfig.unknown;
+
+  const controlRow = (result.results ?? []).find((r: any) => r.kind === 'control');
+  const surrogateRows = (result.results ?? []).filter((r: any) => r.kind === 'surrogate');
+
+  return (
+    <div className="space-y-3">
+      <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Surrogate Identity Probe</h3>
+
+      <div className={`text-xs p-3 rounded border font-mono leading-relaxed ${vc.className}`}>
+        {vc.label}
+      </div>
+
+      {/* JWT + field summary */}
+      <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs font-mono bg-muted/10 p-3 rounded border border-border/30">
+        <span className="text-muted-foreground">JWT sub</span>
+        <span>{result.jwtSub ?? <span className="italic text-muted-foreground/60">not found</span>}</span>
+
+        <span className="text-muted-foreground">JWT user ID</span>
+        <span className={result.jwtUserId != null ? 'text-primary' : 'text-muted-foreground/60 italic'}>
+          {result.jwtUserId ?? 'could not parse'}
+          {result.jwtExpired && <span className="ml-2 text-red-400 text-[10px]">⚠ JWT expired</span>}
+        </span>
+
+        <span className="text-muted-foreground">Lookup field</span>
+        <span className="font-bold">{result.uiField}</span>
+
+        <span className="text-muted-foreground">Real {result.uiField}</span>
+        <span>{result.realUiValue ?? <span className="italic text-muted-foreground/60">not found in body</span>}</span>
+
+        <span className="text-muted-foreground">Surrogate IDs</span>
+        <span className="text-primary">{(result.surrogateUiValues ?? []).join(', ')}</span>
+      </div>
+
+      {/* Control row */}
+      {controlRow && (
+        <div className="border border-border/50 rounded-md p-3 space-y-1">
+          <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-1">Control (real {result.uiField})</div>
+          <div className="flex items-center gap-3 text-xs font-mono">
+            <Badge variant={getStatusVariant(controlRow.status)}>{controlRow.status || 'err'}</Badge>
+            <span>{controlRow.durationMs}ms</span>
+            {controlRow.committed && <span className="text-yellow-400 text-[10px]">⚠ action committed on real account</span>}
+          </div>
+          {controlRow.body && (
+            <pre className="text-[11px] font-mono whitespace-pre-wrap break-all bg-background p-2 rounded border border-border/30 max-h-24 overflow-y-auto mt-1">
+              {controlRow.body}
+            </pre>
+          )}
+        </div>
+      )}
+
+      {/* Surrogate table */}
+      <div className="border border-border/50 rounded-md overflow-hidden">
+        <table className="w-full text-left text-sm font-mono">
+          <thead className="bg-muted/30 text-xs">
+            <tr>
+              <th className="px-3 py-2 border-b text-muted-foreground">Surrogate {result.uiField}</th>
+              <th className="px-3 py-2 border-b w-24 text-muted-foreground">Duration</th>
+              <th className="px-3 py-2 border-b w-24 text-muted-foreground">Status</th>
+              <th className="px-3 py-2 border-b text-muted-foreground">Body / Error</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border/30">
+            {surrogateRows.map((r: any, i: number) => {
+              const bodyStr = typeof r.body === 'string' ? r.body : r.body ? JSON.stringify(r.body) : '';
+              const hasMore = bodyStr && bodyStr.length > 120;
+              const expanded = expandedIdx === i;
+              return (
+                <tr key={i} className={`hover:bg-muted/10 transition-colors align-top ${r.committed ? 'bg-yellow-400/5' : 'bg-green-400/5'}`}>
+                  <td className="px-3 py-2">
+                    <div className="text-[10px] text-muted-foreground mb-0.5">round {r.round}</div>
+                    <div className="text-primary font-bold">{r.surrogateUiValue}</div>
+                  </td>
+                  <td className="px-3 py-2 text-xs">{r.durationMs}ms</td>
+                  <td className="px-3 py-2">
+                    <Badge variant={getStatusVariant(r.status)}>{r.status || 'err'}</Badge>
+                    {r.committed
+                      ? <div className="text-[9px] text-yellow-400 mt-0.5">⚠ committed</div>
+                      : <div className="text-[9px] text-green-400 mt-0.5">safe</div>
+                    }
+                  </td>
+                  <td className="px-3 py-2">
+                    {r.error ? (
+                      <span className="text-destructive text-[11px] break-all">{r.error}</span>
+                    ) : bodyStr ? (
+                      <div className={`flex gap-2 ${hasMore ? 'cursor-pointer' : ''}`}
+                        onClick={() => hasMore && setExpandedIdx(expanded ? null : i)}>
+                        <span className="text-muted-foreground whitespace-pre-wrap flex-1 break-all text-[11px] leading-tight">
+                          {expanded ? bodyStr : bodyStr.substring(0, 120) + (hasMore && !expanded ? '...' : '')}
+                        </span>
+                        {hasMore && (
+                          <span className="text-muted-foreground shrink-0 mt-0.5">
+                            {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                          </span>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-muted-foreground/50 text-[11px] italic">Empty body</span>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+
+      {/* Note row */}
+      {surrogateRows[0]?.note && (
+        <div className="text-xs font-mono text-muted-foreground bg-muted/10 p-2 rounded border border-border/30">
+          {surrogateRows[0].note}
+        </div>
+      )}
     </div>
   );
 }

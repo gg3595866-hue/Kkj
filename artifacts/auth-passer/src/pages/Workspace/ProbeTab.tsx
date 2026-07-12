@@ -71,8 +71,15 @@ export function ProbeTab({ request, setRequest, setResponse }: { request: AppReq
     validationprobe: false,
     replay: false,
     idprobe: false,
+    surrogateprobe: false,
   });
   const [idBodyField, setIdBodyField] = useState('UI');
+
+  // Surrogate probe state
+  const [surrogateUiField, setSurrogateUiField] = useState('UI');
+  const [surrogateUiValues, setSurrogateUiValues] = useState('99999999\n88888888');
+  const [surrogateRounds, setSurrogateRounds] = useState(1);
+  const [surrogateIncludeControl, setSurrogateIncludeControl] = useState(true);
   
   const [timingRounds, setTimingRounds] = useState(5);
   const [raceConnections, setRaceConnections] = useState(10);
@@ -98,7 +105,7 @@ export function ProbeTab({ request, setRequest, setResponse }: { request: AppReq
   const handleRun = () => {
     const selectedTechniques = Object.entries(techniques)
       .filter(([_, v]) => v)
-      .map(([k]) => k as "timing" | "partial" | "expect100" | "race" | "cross" | "methodprobe" | "validationprobe" | "replay" | "idprobe");
+      .map(([k]) => k as "timing" | "partial" | "expect100" | "race" | "cross" | "methodprobe" | "validationprobe" | "replay" | "idprobe" | "surrogateprobe");
       
     if (selectedTechniques.length === 0) return;
 
@@ -138,6 +145,18 @@ export function ProbeTab({ request, setRequest, setResponse }: { request: AppReq
         } : {}),
         // Identity mismatch probe
         ...(techniques.idprobe ? { idBodyField: idBodyField.trim() || 'UI' } : {}),
+        // Surrogate identity probe
+        ...(techniques.surrogateprobe ? {
+          surrogateUiField: surrogateUiField.trim() || 'UI',
+          surrogateUiValues: surrogateUiValues
+            .split('\n')
+            .map(s => s.trim())
+            .filter(s => s !== '')
+            .map(s => Number(s))
+            .filter(n => !isNaN(n)),
+          surrogateRounds,
+          surrogateIncludeControl,
+        } : {}),
       }
     }, {
       onSuccess: (res) => {
@@ -303,6 +322,51 @@ export function ProbeTab({ request, setRequest, setResponse }: { request: AppReq
                       className="w-24 h-7 text-xs font-mono"
                     />
                     <span className="text-xs text-muted-foreground">field name in request body to tamper</span>
+                  </div>
+                )}
+              </div>
+            </label>
+
+            {/* Surrogate Identity Probe */}
+            <label className="flex items-start gap-3 cursor-pointer">
+              <input type="checkbox" className="mt-1 accent-primary" checked={techniques.surrogateprobe}
+                onChange={e => setTechniques(prev => ({...prev, surrogateprobe: e.target.checked}))} />
+              <div className="flex-1">
+                <div className="text-sm font-medium">Surrogate Identity Probe <span className="text-xs font-normal text-green-400 ml-1">✓ safe — real account never touched</span></div>
+                <div className="text-xs text-muted-foreground mb-1">
+                  Exploits the JWT/UI split: your JWT authenticates the call, but a <strong>surrogate (fake) UI</strong> is used as the game-state lookup key. The server processes against the nonexistent surrogate account → 422 safe. Your real account's AN counter is never consumed.
+                  <span className="block mt-0.5 text-yellow-400">Tip: use a real dummy/sacrificial account's ID as the surrogate to get richer 2xx responses you can study.</span>
+                </div>
+                {techniques.surrogateprobe && (
+                  <div className="mt-2 space-y-2" onClick={e => e.preventDefault()}>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground w-24 shrink-0">Body field:</span>
+                      <Input placeholder="UI" value={surrogateUiField} onChange={e => setSurrogateUiField(e.target.value)} className="w-20 h-7 text-xs font-mono" />
+                      <span className="text-xs text-muted-foreground">field to replace with surrogate ID</span>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <span className="text-xs text-muted-foreground w-24 shrink-0 pt-1">Surrogate IDs:</span>
+                      <div className="flex-1">
+                        <Textarea
+                          placeholder={"99999999\n88888888\n12345678"}
+                          value={surrogateUiValues}
+                          onChange={e => setSurrogateUiValues(e.target.value)}
+                          className="font-mono text-xs min-h-[60px]"
+                        />
+                        <div className="text-[10px] text-muted-foreground mt-0.5">One surrogate user ID per line. Use nonexistent IDs for safe probing, or a dummy account ID for richer responses.</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-4 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground">Rounds per ID:</span>
+                        <Input type="number" min={1} max={5} value={surrogateRounds} onChange={e => setSurrogateRounds(Number(e.target.value))} className="w-16 h-7 text-xs font-mono" />
+                      </div>
+                      <label className="flex items-center gap-2 cursor-pointer" onClick={e => e.stopPropagation()}>
+                        <input type="checkbox" checked={surrogateIncludeControl}
+                          onChange={e => setSurrogateIncludeControl(e.target.checked)} className="accent-primary" />
+                        <span className="text-xs text-muted-foreground">Include control (real UI request for comparison)</span>
+                      </label>
+                    </div>
                   </div>
                 )}
               </div>
