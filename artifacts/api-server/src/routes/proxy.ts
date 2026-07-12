@@ -53,9 +53,12 @@ proxyRouter.post("/proxy/send", async (req, res) => {
   };
 
   if (bearerToken) {
-    // Use custom auth header name (e.g. "x-auth" for 1xBet) or default to "Authorization"
+    // Use custom auth header name (e.g. "x-auth" for 1xBet) or default to "Authorization".
+    // Only prepend "Bearer " for the standard Authorization header — custom headers
+    // (x-auth, X-Token, etc.) expect the raw token value without any prefix.
     const headerName = (authHeaderName && authHeaderName.trim()) ? authHeaderName.trim() : "Authorization";
-    requestHeaders[headerName] = `Bearer ${bearerToken}`;
+    const isStandardAuth = headerName.toLowerCase() === "authorization";
+    requestHeaders[headerName] = isStandardAuth ? `Bearer ${bearerToken}` : bearerToken;
   }
   if (contentType) {
     requestHeaders["Content-Type"] = contentType;

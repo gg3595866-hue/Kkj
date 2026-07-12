@@ -21,7 +21,14 @@ export function ScanTab({ request, setRequest, setResponse, onRouteThrough }: {
   const deriveBaseUrl = () => {
     try {
       const u = new URL(request.url);
-      return `${u.protocol}//${u.host}`;
+      // Keep the full path up to (but not including) the last segment.
+      // e.g. https://melbet.mobi/games-frame/service-api/games-witch/MakeAction
+      //   → https://melbet.mobi/games-frame/service-api/games-witch
+      // so wordlist entries like "GetState" probe the same directory as the action.
+      const parts = u.pathname.replace(/\/$/, '').split('/');
+      parts.pop(); // drop last segment (e.g. "MakeAction")
+      const basePath = parts.join('/');
+      return `${u.protocol}//${u.host}${basePath}`;
     } catch {
       return '';
     }
