@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AppRequestState } from './types';
 import { Button, Input, Textarea } from '@/components/ui/core';
 import { useScanEndpoints } from '@workspace/api-client-react';
-import { Play, ListPlus } from 'lucide-react';
+import { Play, ListPlus, Target } from 'lucide-react';
 import { ADMIN_PATH_WORDLIST, GAME_API_WORDLIST } from './adminWordlist';
 
 // Endpoint / admin-surface discovery. If the normal client-facing endpoint
@@ -10,17 +10,18 @@ import { ADMIN_PATH_WORDLIST, GAME_API_WORDLIST } from './adminWordlist';
 // URL against a wordlist of candidate paths — admin backoffice routes by
 // default — so a discovered path can be routed into as the request target
 // instead.
-export function ScanTab({ request, setRequest, setResponse, onRouteThrough }: {
+export function ScanTab({ request, setRequest, setResponse, onRouteThrough, reconTarget }: {
   request: AppRequestState;
   setRequest: React.Dispatch<React.SetStateAction<AppRequestState>>;
   setResponse: (res: any) => void;
   onRouteThrough: (url: string) => void;
+  reconTarget?: { ip: string; domain: string; nonce: number } | null;
 }) {
   const scanEndpoints = useScanEndpoints();
 
-  const deriveBaseUrl = () => {
+  const deriveBaseUrl = (fromUrl?: string) => {
     try {
-      const u = new URL(request.url);
+      const u = new URL(fromUrl ?? request.url);
       // Keep the full path up to (but not including) the last segment.
       // e.g. https://melbet.mobi/games-frame/service-api/games-witch/MakeAction
       //   → https://melbet.mobi/games-frame/service-api/games-witch
@@ -35,6 +36,30 @@ export function ScanTab({ request, setRequest, setResponse, onRouteThrough }: {
   };
 
   const [baseUrl, setBaseUrl] = useState(deriveBaseUrl());
+  const [lastAppliedReconNonce, setLastAppliedReconNonce] = useState<number | null>(null);
+
+  // When Recon routes a confirmed origin IP through, retarget the scan's
+  // base URL at that IP directly — same directory structure, minus
+  // Cloudflare. The Host header needed to resolve it correctly is already
+  // shared via `request.headers` (set by the same Recon action), so the
+  // scan's own auth/header wiring below picks it up automatically.
+  useEffect(() => {
+    if (!reconTarget || reconTarget.nonce === lastAppliedReconNonce) return;
+    setLastAppliedReconNonce(reconTarget.nonce);
+    setBaseUrl(prevBase => {
+      try {
+        const u = new URL(prevBase || request.url);
+        if (u.hostname === reconTarget.domain || u.hostname.endsWith(`.${reconTarget.domain}`)) {
+          const parts = u.pathname.replace(/\/$/, '').split('/');
+          parts.pop();
+          return `${u.protocol}//${reconTarget.ip}${parts.join('/')}`;
+        }
+      } catch { /* fall through to root */ }
+      return `https://${reconTarget.ip}`;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reconTarget]);
+
   const [pathsStr, setPathsStr] = useState(ADMIN_PATH_WORDLIST.join('\n'));
   const [queryParams, setQueryParams] = useState('');
   const [postBody, setPostBody] = useState('');
@@ -121,6 +146,12 @@ export function ScanTab({ request, setRequest, setResponse, onRouteThrough }: {
             {scanEndpoints.isPending ? <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" /> : <><Play className="w-4 h-4 mr-1" /> Run Scan</>}
           </Button>
         </div>
+        {reconTarget && lastAppliedReconNonce === reconTarget.nonce && (
+          <div className="flex items-center gap-1.5 text-[11px] text-green-400 font-mono -mt-1">
+            <Target className="w-3 h-3" />
+            Targeting origin {reconTarget.ip} directly (Host: {reconTarget.domain}) — Cloudflare bypassed
+          </div>
+        )}
         {/* Dual-target toggle */}
         <div className="flex items-start gap-3 pt-1">
           <button

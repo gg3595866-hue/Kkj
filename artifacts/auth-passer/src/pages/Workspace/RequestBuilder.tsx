@@ -17,6 +17,12 @@ export function RequestBuilder({ request, setRequest, setResponse }: { request: 
   const createSaved = useCreateSavedRequest();
   const sendProxy = useSendProxyRequest();
 
+  // Recon's "Route here" sets both a raw-IP URL and a Host header override —
+  // surface that as a direct-IP bypass indicator so it's obvious why the URL
+  // shows an IP instead of a hostname.
+  const hostOverride = request.headers.find(h => h.key.trim().toLowerCase() === 'host' && h.value.trim());
+  const isDirectIpTarget = hostOverride && /^https?:\/\/\d{1,3}(\.\d{1,3}){3}([:/]|$)/.test(request.url);
+
   const handleSend = () => {
     const headersRecord: Record<string, string> = {};
     request.headers.forEach(h => {
@@ -136,6 +142,11 @@ export function RequestBuilder({ request, setRequest, setResponse }: { request: 
             </DialogContent>
           </Dialog>
         </div>
+        {isDirectIpTarget && hostOverride && (
+          <div className="flex items-center gap-1.5 text-[11px] text-green-400 font-mono">
+            Targeting origin IP directly (Host: {hostOverride.value}) — Cloudflare bypassed. Probe and Bypass tabs use this same target.
+          </div>
+        )}
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 space-y-6">

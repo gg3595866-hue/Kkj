@@ -35,15 +35,24 @@ export default function Workspace() {
   const [response, setResponse] = useState<ProxyResponse | { error: any } | null>(null);
   const [activeTab, setActiveTab] = useState('builder');
 
+  // Fires whenever Recon's "route here" is clicked on an origin IP, so tabs
+  // that keep their own local base-URL state (Scan) can resync even when the
+  // ip/domain pair repeats. Builder/Probe/Bypass don't need this — they read
+  // `request` directly, which is updated in the same action.
+  const [reconTarget, setReconTarget] = useState<{ ip: string; domain: string; nonce: number } | null>(null);
+
   const handleRouteThrough = (url: string) => {
     setRequest(prev => ({ ...prev, url }));
     setActiveTab('builder');
   };
 
-  // Route a confirmed/candidate origin IP from Recon into Builder. Preserves
-  // the path+query of the current request if it was targeting the same
-  // domain, otherwise defaults to "/". Adds/updates a Host header so the
-  // direct-IP request still resolves to the right vhost on the origin.
+  // Route a confirmed/candidate origin IP from Recon into Builder (and, via
+  // shared state, Probe/Bypass too — same directip-bypass technique the
+  // Bypass tab already uses under the hood, just persisted as the active
+  // target instead of a one-off diagnostic call). Preserves the path+query
+  // of the current request if it was targeting the same domain, otherwise
+  // defaults to "/". Adds/updates a Host header so the direct-IP request
+  // still resolves to the right vhost on the origin.
   const handleRouteThroughIp = (ip: string, domain: string) => {
     let path = '/';
     try {
@@ -58,6 +67,7 @@ export default function Workspace() {
       headers.push({ id: crypto.randomUUID(), key: 'Host', value: domain });
       return { ...prev, url: `https://${ip}${path}`, headers };
     });
+    setReconTarget({ ip, domain, nonce: Date.now() });
     setActiveTab('builder');
   };
 
@@ -110,7 +120,7 @@ export default function Workspace() {
               <BypassTab request={request} setRequest={setRequest} setResponse={setResponse} />
             </TabsContent>
             <TabsContent value="scan" className="flex-1 overflow-hidden m-0 data-[state=active]:flex flex-col">
-              <ScanTab request={request} setRequest={setRequest} setResponse={setResponse} onRouteThrough={handleRouteThrough} />
+              <ScanTab request={request} setRequest={setRequest} setResponse={setResponse} onRouteThrough={handleRouteThrough} reconTarget={reconTarget} />
             </TabsContent>
             <TabsContent value="recon" className="flex-1 overflow-hidden m-0 data-[state=active]:flex flex-col">
               <ReconTab setResponse={setResponse} />
