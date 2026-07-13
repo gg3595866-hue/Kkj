@@ -38,6 +38,7 @@ export function ScanTab({ request, setRequest, setResponse, onRouteThrough }: {
   const [pathsStr, setPathsStr] = useState(ADMIN_PATH_WORDLIST.join('\n'));
   const [queryParams, setQueryParams] = useState('');
   const [postBody, setPostBody] = useState('');
+  const [scanMethod, setScanMethod] = useState('AUTO');
 
   const handleLoadAdminWordlist = () => {
     setPathsStr(ADMIN_PATH_WORDLIST.join('\n'));
@@ -69,6 +70,7 @@ export function ScanTab({ request, setRequest, setResponse, onRouteThrough }: {
         authHeaderName: request.authHeaderName || undefined,
         headers: Object.keys(headersRecord).length > 0 ? headersRecord : undefined,
         postBody: postBody.trim() || undefined,
+        scanMethod,
       }
     }, {
       onSuccess: (res) => {
@@ -84,6 +86,21 @@ export function ScanTab({ request, setRequest, setResponse, onRouteThrough }: {
     <div className="flex flex-col h-full bg-background overflow-hidden">
       <div className="p-4 border-b bg-card shrink-0 flex flex-col gap-3">
         <div className="flex items-center gap-2">
+          <select
+            className="h-9 rounded-md border border-input bg-muted font-mono text-sm px-2 shrink-0 text-foreground"
+            value={scanMethod}
+            onChange={e => setScanMethod(e.target.value)}
+            title="HTTP method for each path probe"
+          >
+            <option value="AUTO">AUTO</option>
+            <option value="GET">GET</option>
+            <option value="POST">POST</option>
+            <option value="PUT">PUT</option>
+            <option value="DELETE">DELETE</option>
+            <option value="HEAD">HEAD</option>
+            <option value="OPTIONS">OPTIONS</option>
+            <option value="PATCH">PATCH</option>
+          </select>
           <Input
             className="flex-1 font-mono text-sm"
             placeholder="https://api.example.com"
@@ -96,7 +113,8 @@ export function ScanTab({ request, setRequest, setResponse, onRouteThrough }: {
           </Button>
         </div>
         <div className="text-xs text-muted-foreground">
-          Probes each path below with GET (then POST if nothing useful comes back) against the base URL, using the same auth as the Builder/Probe tabs. Useful for finding an admin/internal endpoint to route requests through when the normal client-side route doesn't work.
+          <span className="font-medium text-foreground">AUTO</span> = GET first, then POST if nothing useful returns.
+          Select a specific method to force all probes to use that method only. Uses the same auth as Builder/Probe tabs.
         </div>
       </div>
 

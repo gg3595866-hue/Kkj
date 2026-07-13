@@ -70,6 +70,7 @@ scanRouter.post("/proxy/scan", async (req, res) => {
     authHeaderName,
     headers: customHeaders = {},
     postBody,
+    scanMethod,  // "AUTO" | "GET" | "POST" | "PUT" | "DELETE" | "HEAD" | "OPTIONS"
   } = req.body;
 
   if (!baseUrl || !Array.isArray(paths) || paths.length === 0) {
@@ -98,16 +99,21 @@ scanRouter.post("/proxy/scan", async (req, res) => {
       : bearerToken;
   }
 
-  // Probe each path with GET, and optionally POST if GET gives nothing useful.
-  // Bounded concurrency (not a full Promise.all fan-out) so the target's
-  // response time doesn't cause probes to queue past their own timeout.
+  // Determine which HTTP methods to try for each path.
+  // AUTO = GET first, then POST if GET gives nothing useful.
+  // Any explicit method = only that method.
+  const resolvedMethod = (scanMethod ?? "AUTO").toUpperCase();
+  const methodsToTry: string[] = resolvedMethod === "AUTO"
+    ? ["GET", "POST"]
+    : [resolvedMethod];
+
   const probeOne = async (path: string) => {
     const url = `${base}/${path}${qs}`;
     const results = [];
 
-    for (const method of ["GET", "POST"] as const) {
-      // Skip POST if no body provided and GET already returned data
-      if (method === "POST" && !postBody && results.some((r) => r.hasData)) {
+    for (const method of methodsToTry) {
+      // In AUTO mode, skip POST if no body provided and GET already returned data
+      if (resolvedMethod === "AUTO" && method === "POST" && !postBody && results.some((r: any) => r.hasData)) {
         continue;
       }
 

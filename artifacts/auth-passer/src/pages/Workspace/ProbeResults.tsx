@@ -695,6 +695,12 @@ function SurrogateProbeResult({ result }: { result: any }) {
                   <td className="px-3 py-2">
                     <div className="text-[10px] text-muted-foreground mb-0.5">round {r.round}</div>
                     <div className="text-primary font-bold">{r.surrogateUiValue}</div>
+                    {r.jwtTampered && r.fakeSub && (
+                      <div className="text-[10px] text-yellow-400 mt-0.5">JWT sub → {r.fakeSub}</div>
+                    )}
+                    {!r.jwtTampered && (
+                      <div className="text-[10px] text-red-400 mt-0.5">⚠ JWT not tampered</div>
+                    )}
                   </td>
                   <td className="px-3 py-2 text-xs">{r.durationMs}ms</td>
                   <td className="px-3 py-2">
