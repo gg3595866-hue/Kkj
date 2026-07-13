@@ -40,6 +40,34 @@ export default function Workspace() {
     setActiveTab('builder');
   };
 
+  // Route a confirmed/candidate origin IP from Recon into Builder. Preserves
+  // the path+query of the current request if it was targeting the same
+  // domain, otherwise defaults to "/". Adds/updates a Host header so the
+  // direct-IP request still resolves to the right vhost on the origin.
+  const handleRouteThroughIp = (ip: string, domain: string) => {
+    let path = '/';
+    try {
+      const current = new URL(request.url);
+      if (current.hostname === domain || current.hostname.endsWith(`.${domain}`)) {
+        path = `${current.pathname}${current.search}`;
+      }
+    } catch { /* current URL not parseable — fall back to root */ }
+
+    setRequest(prev => {
+      const headers = prev.headers.filter(h => h.key.trim().toLowerCase() !== 'host');
+      headers.push({ id: crypto.randomUUID(), key: 'Host', value: domain });
+      return { ...prev, url: `https://${ip}${path}`, headers };
+    });
+    setActiveTab('builder');
+  };
+
+  // Route a discovered non-Cloudflare subdomain into Builder as a normal
+  // hostname (no Host header override needed — it resolves directly).
+  const handleRouteThroughDomain = (subdomain: string) => {
+    setRequest(prev => ({ ...prev, url: `https://${subdomain}/` }));
+    setActiveTab('builder');
+  };
+
   useEffect(() => {
     localStorage.setItem('auth_passer_bearer', request.bearerToken);
   }, [request.bearerToken]);
@@ -89,9 +117,9 @@ export default function Workspace() {
             </TabsContent>
           </Tabs>
         </Panel>
-        
+
         <ResizeHandle />
-        
+
         <Panel defaultSize={40} minSize={20}>
           {response && (response as any)._isProbe ? (
             <ProbeResults response={response} />
@@ -100,7 +128,7 @@ export default function Workspace() {
           ) : response && (response as any)._isScan ? (
             <ScanResults response={response} baseUrl={(response as any).baseUrl} queryParams={(response as any).queryParams} onRouteThrough={handleRouteThrough} />
           ) : response && (response as any)._isRecon ? (
-            <ReconResults response={response} />
+            <ReconResults response={response} onRouteThroughIp={handleRouteThroughIp} onRouteThroughDomain={handleRouteThroughDomain} />
           ) : (
             <ResponsePanel response={response} />
           )}

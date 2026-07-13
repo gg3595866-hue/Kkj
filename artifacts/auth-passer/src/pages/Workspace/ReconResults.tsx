@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { cn } from '@/lib/utils';
-import { Shield, ChevronDown, ChevronRight, Copy, ExternalLink } from 'lucide-react';
+import { Shield, ChevronDown, ChevronRight, Copy, ExternalLink, ArrowRightCircle } from 'lucide-react';
 import { Button } from '@/components/ui/core';
 
 function Badge({ children, color = 'default' }: { children: React.ReactNode; color?: 'green' | 'red' | 'yellow' | 'blue' | 'default' }) {
@@ -18,8 +18,9 @@ function Badge({ children, color = 'default' }: { children: React.ReactNode; col
   );
 }
 
-function IpCard({ ip, confirmed, statusCode, serverHeader, label }: {
-  ip: string; confirmed: boolean; statusCode: number; serverHeader?: string; label?: string;
+function IpCard({ ip, domain, confirmed, statusCode, serverHeader, label, onRouteThroughIp }: {
+  ip: string; domain: string; confirmed: boolean; statusCode: number; serverHeader?: string; label?: string;
+  onRouteThroughIp: (ip: string, domain: string) => void;
 }) {
   const copy = () => navigator.clipboard?.writeText(ip).catch(() => { });
   return (
@@ -38,6 +39,15 @@ function IpCard({ ip, confirmed, statusCode, serverHeader, label }: {
             : <Badge color="yellow">unverified</Badge>
           }
           {statusCode > 0 && <Badge color="default">{statusCode}</Badge>}
+          <Button
+            size="sm"
+            variant={confirmed ? "default" : "outline"}
+            className="h-6 px-2 text-[10px]"
+            onClick={() => onRouteThroughIp(ip, domain)}
+            title="Load this IP into the Builder with a matching Host header"
+          >
+            <ArrowRightCircle className="w-3 h-3 mr-1" /> Route here
+          </Button>
           <button onClick={copy} title="Copy IP" className="text-muted-foreground hover:text-foreground transition-colors">
             <Copy className="w-3.5 h-3.5" />
           </button>
@@ -68,7 +78,11 @@ function IpCard({ ip, confirmed, statusCode, serverHeader, label }: {
   );
 }
 
-export function ReconResults({ response }: { response: any }) {
+export function ReconResults({ response, onRouteThroughIp, onRouteThroughDomain }: {
+  response: any;
+  onRouteThroughIp: (ip: string, domain: string) => void;
+  onRouteThroughDomain: (subdomain: string) => void;
+}) {
   const [phase3Open, setPhase3Open] = useState(false);
   const [showAllSubs, setShowAllSubs] = useState(false);
 
@@ -119,7 +133,7 @@ export function ReconResults({ response }: { response: any }) {
             <h3 className="text-xs font-semibold text-foreground uppercase tracking-wider">Origin IP Candidates</h3>
             <div className="space-y-2">
               {(candidateIps ?? []).map((c: any, i: number) => (
-                <IpCard key={i} ip={c.ip} confirmed={c.confirmed} statusCode={c.statusCode} serverHeader={c.serverHeader} />
+                <IpCard key={i} ip={c.ip} domain={domain} confirmed={c.confirmed} statusCode={c.statusCode} serverHeader={c.serverHeader} onRouteThroughIp={onRouteThroughIp} />
               ))}
             </div>
           </section>
@@ -227,6 +241,15 @@ export function ReconResults({ response }: { response: any }) {
                           <span key={j} className="text-green-300">{ip}</span>
                         ))}
                       </div>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-5 px-1.5 text-[9px] ml-auto"
+                        onClick={() => onRouteThroughDomain(s.subdomain)}
+                        title="Load this subdomain into the Builder"
+                      >
+                        <ArrowRightCircle className="w-2.5 h-2.5 mr-0.5" /> Route
+                      </Button>
                     </div>
                   ))}
                 </div>
@@ -268,10 +291,9 @@ export function ReconResults({ response }: { response: any }) {
             <div className="space-y-1.5 text-xs text-muted-foreground">
               {confirmedIps.map((c: any) => (
                 <div key={c.ip} className="space-y-1">
-                  <div>1. In Builder tab, change the URL to <span className="font-mono text-primary">https://{c.ip}/...</span> using the same path</div>
-                  <div>2. Add header <span className="font-mono text-primary">Host: {domain}</span> to route correctly</div>
-                  <div>3. Your requests now bypass Cloudflare WAF/DDoS/rate limits completely</div>
-                  <div>4. Use Scan tab with the direct IP as base URL to find admin/internal paths hidden behind CF</div>
+                  <div>1. Click <span className="font-mono text-primary">Route here</span> above on <span className="font-mono text-primary">{c.ip}</span> — it loads the URL and sets the <span className="font-mono text-primary">Host: {domain}</span> header for you</div>
+                  <div>2. Your requests now bypass Cloudflare WAF/DDoS/rate limits completely</div>
+                  <div>3. Use Scan tab with the direct IP as base URL to find admin/internal paths hidden behind CF</div>
                 </div>
               ))}
               {confirmedIps.length === 0 && (
