@@ -44,6 +44,51 @@ const DEFAULT_HEADERS: Record<string, string> = {
   "Accept-Language": "en-US,en;q=0.9",
 };
 
+// Extract API paths and endpoint strings embedded in HTML/JS response bodies.
+// Looks for config keys, fetch calls, axios calls, and string literals
+// that pattern-match as internal API routes.
+function extractApiPaths(body: string, sourceUrl: string): string[] {
+  if (!body || body.length < 10) return [];
+  const found = new Set<string>();
+
+  // Pattern 1: Named config fields — e.g. cdnConfigEndpoint: "/games-frame/service-api/..."
+  const configKeyPattern = /(?:endpoint|url|api|path|route|base|src|href|action|config)\w*\s*[:=]\s*["'`](\/[^"'`\s,;)]{4,120})["'`]/gi;
+  for (const m of body.matchAll(configKeyPattern)) {
+    found.add(m[1]);
+  }
+
+  // Pattern 2: fetch/axios/XMLHttpRequest calls — e.g. fetch("/api/..."), axios.post("/...")
+  const fetchPattern = /(?:fetch|axios\.\w+|\.open)\s*\(\s*["'`](\/[^"'`\s,;)]{4,120})["'`]/gi;
+  for (const m of body.matchAll(fetchPattern)) {
+    found.add(m[1]);
+  }
+
+  // Pattern 3: Quoted path strings that look like API routes (contain /api/, /service-api/, /games-, etc.)
+  const apiLikePattern = /["'`](\/(?:api|service-api|games|game|admin|internal|backend|v\d+|proxy)[^"'`\s,;)]{2,100})["'`]/gi;
+  for (const m of body.matchAll(apiLikePattern)) {
+    const p = m[1];
+    // Skip likely asset paths (.js, .css, .png, etc.)
+    if (/\.(js|css|png|jpg|gif|svg|woff|ico|map)(\?|$)/.test(p)) continue;
+    found.add(p);
+  }
+
+  // Pattern 4: Deduce origin — relative paths need the source origin
+  const origin = (() => {
+    try { return new URL(sourceUrl).origin; } catch { return ""; }
+  })();
+
+  // Filter and annotate paths
+  const results: string[] = [];
+  for (const p of found) {
+    // De-dupe near-duplicates (same path different query)
+    const base = p.split("?")[0];
+    if (results.some(r => r.split("?")[0] === base)) continue;
+    results.push(origin ? `${origin}${p}` : p);
+  }
+
+  return results.slice(0, 40); // Cap at 40 to avoid noise
+}
+
 function looksLikeData(body: string, status: number): boolean {
   if (status === 0 || status >= 500) return false;
   if (status === 404) return false;
@@ -145,6 +190,24 @@ scanRouter.post("/proxy/scan", async (req, res) => {
           body.length > 5000 ? body.slice(0, 5000) + "\n...(truncated)" : body;
         const hasData = looksLikeData(body, response.status);
 
+        // Capture interesting response headers
+        const interestingHeaderNames = [
+          "server", "x-powered-by", "via", "x-backend-server",
+          "x-real-server", "x-origin", "x-upstream", "x-cache",
+          "x-amz-cf-id", "x-request-id", "x-trace-id", "x-correlation-id",
+          "x-forwarded-server", "x-forwarded-host", "x-envoy-upstream",
+          "cf-ray", "x-served-by", "x-backend", "x-app-version",
+        ];
+        const capturedHeaders: Record<string, string> = {};
+        response.headers.forEach((val, key) => {
+          if (interestingHeaderNames.includes(key.toLowerCase())) {
+            capturedHeaders[key.toLowerCase()] = val;
+          }
+        });
+
+        // Extract embedded API paths from HTML/JS bodies
+        const extractedPaths = extractApiPaths(body, url);
+
         attempts.push({
           path,
           method,
@@ -154,6 +217,8 @@ scanRouter.post("/proxy/scan", async (req, res) => {
           hasData,
           body: truncated,
           error: null,
+          headers: Object.keys(capturedHeaders).length > 0 ? capturedHeaders : undefined,
+          extractedPaths: extractedPaths.length > 0 ? extractedPaths : undefined,
         });
 
         if (hasData && method === "GET" && !postBody) break;

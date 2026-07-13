@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { ChevronDown, ChevronRight, ArrowRightCircle, Search, GitCompare } from 'lucide-react';
+import { ChevronDown, ChevronRight, ArrowRightCircle, Search, GitCompare, Tag, ExternalLink } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/core';
 
@@ -12,6 +12,8 @@ interface ScanResultEntry {
   hasData: boolean;
   body?: string | null;
   error?: string | null;
+  headers?: Record<string, string>;
+  extractedPaths?: string[];
 }
 
 interface DualScanResultEntry {
@@ -68,6 +70,17 @@ export function ScanResults({ response, baseUrl, queryParams, onRouteThrough }: 
   const statusMismatches = dualMode ? results.filter(r => isDual(r) && r.statusMismatch) : [];
   const dataMismatches = dualMode ? results.filter(r => isDual(r) && r.hasDataMismatch) : [];
 
+  // Aggregate all extracted paths and headers across all results
+  const allExtractedPaths = new Set<string>();
+  const allHeaders: Record<string, string> = {};
+  for (const r of results) {
+    const entries = isDual(r) ? [r.client, r.backend] : [r as ScanResultEntry];
+    for (const e of entries) {
+      if (e.extractedPaths) e.extractedPaths.forEach(p => allExtractedPaths.add(p));
+      if (e.headers) Object.assign(allHeaders, e.headers);
+    }
+  }
+
   const buildUrl = (path: string, base?: string) => {
     const b = (base || baseUrl || '').replace(/\/$/, '');
     const qs = queryParams ? `?${queryParams}` : '';
@@ -88,6 +101,65 @@ export function ScanResults({ response, baseUrl, queryParams, onRouteThrough }: 
           )}
         </div>
       </div>
+
+      {/* Intelligence panel — discovered paths + interesting headers */}
+      {(allExtractedPaths.size > 0 || Object.keys(allHeaders).length > 0) && (
+        <div className="border-b border-border/50 bg-card">
+          <details open className="group">
+            <summary className="px-4 py-2 cursor-pointer flex items-center gap-2 text-xs font-semibold text-yellow-400 hover:bg-muted/10 select-none list-none">
+              <Tag className="w-3 h-3" />
+              🔍 {allExtractedPaths.size} API paths extracted from responses
+              {Object.keys(allHeaders).length > 0 && ` · ${Object.keys(allHeaders).length} server header${Object.keys(allHeaders).length > 1 ? 's' : ''} captured`}
+              <ChevronDown className="w-3 h-3 ml-auto group-open:rotate-180 transition-transform" />
+            </summary>
+            <div className="px-4 pb-3 space-y-3">
+              {Object.keys(allHeaders).length > 0 && (
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5 font-semibold">Server / Infrastructure headers</div>
+                  <div className="flex flex-wrap gap-2">
+                    {Object.entries(allHeaders).map(([k, v]) => (
+                      <div key={k} className="font-mono text-[10px] bg-muted/20 border border-border/40 rounded px-2 py-1">
+                        <span className="text-muted-foreground">{k}: </span>
+                        <span className="text-foreground font-semibold">{v}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {allExtractedPaths.size > 0 && (
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5 font-semibold">API paths found in JS/HTML responses — click to route</div>
+                  <div className="space-y-1 max-h-48 overflow-y-auto">
+                    {[...allExtractedPaths].map((p, i) => (
+                      <div key={i} className="flex items-center gap-2 group/path font-mono text-[11px]">
+                        <span className="text-primary flex-1 break-all leading-tight">{p}</span>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-5 px-1.5 text-[9px] opacity-0 group-hover/path:opacity-100 transition-opacity shrink-0"
+                          onClick={() => onRouteThrough(p)}
+                          title="Load into Builder"
+                        >
+                          <ArrowRightCircle className="w-2.5 h-2.5 mr-0.5" /> Route
+                        </Button>
+                        <a
+                          href={p}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="opacity-0 group-hover/path:opacity-100 transition-opacity shrink-0"
+                          title="Open in new tab"
+                        >
+                          <ExternalLink className="w-3 h-3 text-muted-foreground hover:text-foreground" />
+                        </a>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </details>
+        </div>
+      )}
 
       {/* Dual mode URL legend */}
       {dualMode && (
@@ -201,6 +273,35 @@ function ScanRow({ result, url, onRouteThrough }: { result: ScanResultEntry; url
 
       {open && (
         <div className="border-t border-border/50 divide-y divide-border/50">
+          {result.headers && Object.keys(result.headers).length > 0 && (
+            <div className="px-3 py-2">
+              <div className="text-muted-foreground mb-1 uppercase tracking-wider text-[10px] font-semibold">Server headers captured</div>
+              <div className="flex flex-wrap gap-1.5">
+                {Object.entries(result.headers).map(([k, v]) => (
+                  <span key={k} className="font-mono text-[10px] bg-yellow-400/10 border border-yellow-400/20 rounded px-2 py-0.5">
+                    <span className="text-muted-foreground">{k}: </span>
+                    <span className="text-yellow-300 font-semibold">{v}</span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          {result.extractedPaths && result.extractedPaths.length > 0 && (
+            <div className="px-3 py-2">
+              <div className="text-muted-foreground mb-1 uppercase tracking-wider text-[10px] font-semibold">API paths found in response</div>
+              <div className="space-y-0.5">
+                {result.extractedPaths.map((p, i) => (
+                  <div key={i} className="flex items-center gap-2 group/ep font-mono text-[10px]">
+                    <span className="text-primary flex-1 break-all">{p}</span>
+                    <button
+                      className="opacity-0 group-hover/ep:opacity-100 text-[9px] border border-border/50 rounded px-1 py-0.5 hover:bg-muted/20 transition-opacity"
+                      onClick={() => onRouteThrough(p)}
+                    >route</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           {result.error && (
             <div className="px-3 py-2 text-red-500 break-all">
               {result.error}
