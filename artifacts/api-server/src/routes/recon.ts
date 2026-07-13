@@ -255,7 +255,7 @@ async function verifyIp(ip: string, domain: string): Promise<{ confirmed: boolea
 }
 
 // ─── Route ────────────────────────────────────────────────────────────────────
-reconRouter.post("/api/recon/cloudfail", async (req, res) => {
+reconRouter.post("/recon/cloudfail", async (req, res) => {
   const { target, customSubdomains } = req.body as { target?: string; customSubdomains?: string[] };
 
   if (!target || typeof target !== "string") {

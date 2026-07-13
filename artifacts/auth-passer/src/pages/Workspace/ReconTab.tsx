@@ -20,7 +20,7 @@ export function ReconTab({ setResponse }: {
         .map(s => s.trim())
         .filter(Boolean);
 
-      const resp = await fetch('/auth-passer/api/recon/cloudfail', {
+      const resp = await fetch('/api/recon/cloudfail', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
