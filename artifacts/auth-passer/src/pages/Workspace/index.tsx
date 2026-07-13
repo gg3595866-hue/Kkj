@@ -9,6 +9,8 @@ import { BypassTab } from './BypassTab';
 import { BypassResults } from './BypassResults';
 import { ScanTab } from './ScanTab';
 import { ScanResults } from './ScanResults';
+import { ReconTab } from './ReconTab';
+import { ReconResults } from './ReconResults';
 import { AppRequestState } from './types';
 import { ProxyResponse } from '@workspace/api-client-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/core';
@@ -67,6 +69,7 @@ export default function Workspace() {
                 <TabsTrigger value="probe">Probe</TabsTrigger>
                 <TabsTrigger value="bypass">Bypass</TabsTrigger>
                 <TabsTrigger value="scan">Scan</TabsTrigger>
+                <TabsTrigger value="recon">Recon</TabsTrigger>
               </TabsList>
             </div>
             <TabsContent value="builder" className="flex-1 overflow-hidden m-0 data-[state=active]:flex flex-col">
@@ -81,6 +84,9 @@ export default function Workspace() {
             <TabsContent value="scan" className="flex-1 overflow-hidden m-0 data-[state=active]:flex flex-col">
               <ScanTab request={request} setRequest={setRequest} setResponse={setResponse} onRouteThrough={handleRouteThrough} />
             </TabsContent>
+            <TabsContent value="recon" className="flex-1 overflow-hidden m-0 data-[state=active]:flex flex-col">
+              <ReconTab setResponse={setResponse} />
+            </TabsContent>
           </Tabs>
         </Panel>
         
@@ -93,6 +99,8 @@ export default function Workspace() {
             <BypassResults response={response} />
           ) : response && (response as any)._isScan ? (
             <ScanResults response={response} baseUrl={(response as any).baseUrl} queryParams={(response as any).queryParams} onRouteThrough={handleRouteThrough} />
+          ) : response && (response as any)._isRecon ? (
+            <ReconResults response={response} />
           ) : (
             <ResponsePanel response={response} />
           )}
