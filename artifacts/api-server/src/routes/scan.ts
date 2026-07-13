@@ -107,13 +107,14 @@ scanRouter.post("/proxy/scan", async (req, res) => {
     ? ["GET", "POST"]
     : [resolvedMethod];
 
-  const probeOne = async (path: string) => {
-    const url = `${base}/${path}${qs}`;
-    const results = [];
+  // Probe a single path against a single base URL, returning the best result.
+  const probeUrl = async (targetBase: string, path: string) => {
+    const url = `${targetBase.replace(/\/$/, "")}/${path}${qs}`;
+    const attempts = [];
 
     for (const method of methodsToTry) {
       // In AUTO mode, skip POST if no body provided and GET already returned data
-      if (resolvedMethod === "AUTO" && method === "POST" && !postBody && results.some((r: any) => r.hasData)) {
+      if (resolvedMethod === "AUTO" && method === "POST" && !postBody && attempts.some((r: any) => r.hasData)) {
         continue;
       }
 
@@ -144,7 +145,7 @@ scanRouter.post("/proxy/scan", async (req, res) => {
           body.length > 5000 ? body.slice(0, 5000) + "\n...(truncated)" : body;
         const hasData = looksLikeData(body, response.status);
 
-        results.push({
+        attempts.push({
           path,
           method,
           status: response.status,
@@ -155,21 +156,16 @@ scanRouter.post("/proxy/scan", async (req, res) => {
           error: null,
         });
 
-        // If we got data on GET, no need to try POST unless caller wants it
         if (hasData && method === "GET" && !postBody) break;
       } catch (err: unknown) {
         const durationMs = Date.now() - startTime;
         let hostname: string | undefined;
-        try {
-          hostname = new URL(url).hostname;
-        } catch {
-          // url already validated by caller loop; ignore if unparsable here
-        }
+        try { hostname = new URL(url).hostname; } catch { /* ignore */ }
         const errorMessage =
           err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError")
             ? "Timed out (10s)"
             : describeFetchError(err, hostname);
-        results.push({
+        attempts.push({
           path,
           method,
           status: 0,
@@ -179,12 +175,37 @@ scanRouter.post("/proxy/scan", async (req, res) => {
           body: null,
           error: errorMessage,
         });
-        break; // No point trying POST if GET errored at network level
+        break;
       }
     }
 
-    // Return the most useful result (prefer hasData, else last)
-    return results.find((r) => r.hasData) ?? results[results.length - 1];
+    return attempts.find((r) => r.hasData) ?? attempts[attempts.length - 1];
+  };
+
+  const backendUrl: string | undefined = req.body.backendUrl?.trim();
+  const isDual = !!backendUrl;
+
+  const probeOne = async (path: string) => {
+    if (!isDual) {
+      return probeUrl(base, path);
+    }
+    // Dual-target: probe client URL and backend URL simultaneously
+    const [clientResult, backendResult] = await Promise.all([
+      probeUrl(base, path),
+      probeUrl(backendUrl!, path),
+    ]);
+    const statusMismatch = clientResult.status !== backendResult.status;
+    const hasDataMismatch = clientResult.hasData !== backendResult.hasData;
+    return {
+      path,
+      isDual: true,
+      // Expose top-level hasData as true if either responded with data (surface in summary)
+      hasData: clientResult.hasData || backendResult.hasData,
+      statusMismatch,
+      hasDataMismatch,
+      client: clientResult,
+      backend: backendResult,
+    };
   };
 
   const results = await mapWithConcurrency(paths, 10, probeOne);

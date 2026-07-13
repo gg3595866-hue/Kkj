@@ -39,6 +39,8 @@ export function ScanTab({ request, setRequest, setResponse, onRouteThrough }: {
   const [queryParams, setQueryParams] = useState('');
   const [postBody, setPostBody] = useState('');
   const [scanMethod, setScanMethod] = useState('AUTO');
+  const [dualEnabled, setDualEnabled] = useState(false);
+  const [backendUrl, setBackendUrl] = useState('');
 
   const handleLoadAdminWordlist = () => {
     setPathsStr(ADMIN_PATH_WORDLIST.join('\n'));
@@ -71,10 +73,17 @@ export function ScanTab({ request, setRequest, setResponse, onRouteThrough }: {
         headers: Object.keys(headersRecord).length > 0 ? headersRecord : undefined,
         postBody: postBody.trim() || undefined,
         scanMethod,
-      }
+        ...(dualEnabled && backendUrl.trim() ? { backendUrl: backendUrl.trim() } : {}),
+      } as any
     }, {
       onSuccess: (res) => {
-        setResponse({ results: res, _isScan: true, baseUrl: baseUrl.trim(), queryParams: queryParams.trim() });
+        setResponse({
+          results: res,
+          _isScan: true,
+          baseUrl: baseUrl.trim(),
+          queryParams: queryParams.trim(),
+          ...(dualEnabled && backendUrl.trim() ? { backendUrl: backendUrl.trim() } : {}),
+        });
       },
       onError: (err) => {
         setResponse({ error: err, _isScan: true });
@@ -111,6 +120,35 @@ export function ScanTab({ request, setRequest, setResponse, onRouteThrough }: {
           <Button onClick={handleRun} disabled={scanEndpoints.isPending || !baseUrl.trim() || !pathsStr.trim()} className="shrink-0 w-32">
             {scanEndpoints.isPending ? <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" /> : <><Play className="w-4 h-4 mr-1" /> Run Scan</>}
           </Button>
+        </div>
+        {/* Dual-target toggle */}
+        <div className="flex items-start gap-3 pt-1">
+          <button
+            onClick={() => setDualEnabled(v => !v)}
+            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors focus:outline-none mt-0.5 ${dualEnabled ? 'bg-primary' : 'bg-muted'}`}
+            role="switch"
+            aria-checked={dualEnabled}
+            title="Compare client API vs backend/internal server"
+          >
+            <span className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-background shadow-lg ring-0 transition-transform ${dualEnabled ? 'translate-x-4' : 'translate-x-0'}`} />
+          </button>
+          <div className="flex-1 space-y-1.5">
+            <div className="text-xs font-medium text-foreground leading-tight">
+              Compare vs Backend / Internal Server
+            </div>
+            <div className="text-xs text-muted-foreground leading-snug">
+              Each path scanned against <span className="text-foreground">both</span> the client API URL and your backend URL simultaneously.
+              Mismatches (different status codes, one has data the other doesn't) are highlighted — these reveal what middleware is hiding.
+            </div>
+            {dualEnabled && (
+              <Input
+                className="font-mono text-sm mt-1"
+                placeholder="https://internal.melbet.mobi/game-backend"
+                value={backendUrl}
+                onChange={e => setBackendUrl(e.target.value)}
+              />
+            )}
+          </div>
         </div>
         <div className="text-xs text-muted-foreground">
           <span className="font-medium text-foreground">AUTO</span> = GET first, then POST if nothing useful returns.
