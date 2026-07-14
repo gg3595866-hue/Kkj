@@ -3,6 +3,7 @@ import { db } from "@workspace/db";
 import { savedRequestsTable, requestHistoryTable } from "@workspace/db";
 import { eq, desc } from "drizzle-orm";
 import { request as undiciRequest, Agent } from "undici";
+import * as zlib from "node:zlib";
 
 const proxyRouter = Router();
 
@@ -13,10 +14,19 @@ const agent = new Agent({
   connect: { rejectUnauthorized: false },
 });
 
+// Must match the Probe tab's BROWSER_HEADERS (see routes/probe.ts) so a
+// request behaves identically whether it's sent from Builder or Probe.
+// A User-Agent claiming a real Chrome browser without the Accept-Encoding /
+// Cache-Control / Pragma headers a real browser always sends is a classic
+// bot-fingerprint mismatch — anti-bot/WAF layers (common on gambling sites)
+// key on exactly this and return 401 even with a valid auth token.
 const DEFAULT_HEADERS: Record<string, string> = {
   "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-  Accept: "*/*",
+  Accept: "application/json, text/plain, */*",
   "Accept-Language": "en-US,en;q=0.9",
+  "Accept-Encoding": "gzip, deflate, br",
+  "Cache-Control": "no-cache",
+  Pragma: "no-cache",
 };
 
 type TransportOutcome =
@@ -158,6 +168,24 @@ async function readBodyStream(
   return { buffer: Buffer.concat(chunks), truncated, totalBytes };
 }
 
+// We now send Accept-Encoding: gzip, deflate, br (to match a real browser's
+// fingerprint — see DEFAULT_HEADERS comment above). undici's low-level
+// `request()` API, unlike `fetch()`, never decompresses the response body
+// for us, so we have to do it ourselves based on whatever Content-Encoding
+// the server actually sent back.
+function decompressBody(buf: Buffer, contentEncoding?: string | string[]): Buffer {
+  const enc = (Array.isArray(contentEncoding) ? contentEncoding[0] : contentEncoding ?? "").toLowerCase();
+  try {
+    if (enc.includes("br")) return zlib.brotliDecompressSync(buf);
+    if (enc.includes("gzip")) return zlib.gunzipSync(buf);
+    if (enc.includes("deflate")) return zlib.inflateSync(buf);
+  } catch {
+    // Truncated/partial compressed stream (e.g. body was capped by
+    // MAX_BODY_BYTES) — fall back to the raw bytes rather than throwing.
+  }
+  return buf;
+}
+
 // POST /api/proxy/send
 proxyRouter.post("/proxy/send", async (req, res) => {
   const {
@@ -275,7 +303,8 @@ proxyRouter.post("/proxy/send", async (req, res) => {
       finalStatus = statusCode;
       finalStatusText = statusText;
       finalHeaders = rawHeaders;
-      finalBody = decodeBody(buffer, rawHeaders["content-type"]);
+      const decompressed = decompressBody(buffer, rawHeaders["content-encoding"]);
+      finalBody = decodeBody(decompressed, rawHeaders["content-type"]);
       finalBodySizeBytes = totalBytes;
       finalBodyTruncated = truncated;
 
